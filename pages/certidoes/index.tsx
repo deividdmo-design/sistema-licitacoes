@@ -14,8 +14,7 @@ interface Certidao {
   vencimento: string
   arquivo_url: string | null
   unidade_id: string
-  // 1. Ajuste na Interface: Aceitando retorno único ou lista do Supabase
-  unidades?: { codigo: string; razao_social: string } | { codigo: string; razao_social: string }[]
+  unidades?: { codigo: string; razao_social: string }
 }
 
 export default function ListaCertidoes() {
@@ -32,32 +31,25 @@ export default function ListaCertidoes() {
       .from('certidoes')
       .select('*, unidades(codigo, razao_social)')
       .order('vencimento', { ascending: true })
-    
     if (error) {
-      console.error(error)
+      console.error('Erro ao carregar certidões:', error)
+      alert('Erro ao carregar dados. Verifique o console.')
     } else {
-      // 2. Correção de Dados: Tratando a unidade com segurança para o Deploy
-      const formatado = data?.map((cert: any) => ({
-        ...cert,
-        unidades: Array.isArray(cert.unidades) ? cert.unidades[0] : cert.unidades
-      }))
-      setCertidoes(formatado || [])
+      setCertidoes(data || [])
     }
     setLoading(false)
-  }
-
-  // Helper para acessar dados da unidade sem erro de tipo
-  const getUnidadeInfo = (cert: Certidao) => {
-    const u: any = cert.unidades
-    const data = Array.isArray(u) ? u[0] : u
-    return data ? `${data.codigo} - ${data.razao_social}` : 'Geral'
   }
 
   async function excluirCertidao(id: string) {
     if (!confirm('Tem certeza que deseja excluir esta certidão?')) return
     const { error } = await supabase.from('certidoes').delete().eq('id', id)
-    if (error) alert('Erro ao excluir: ' + error.message)
-    else carregarCertidoes()
+    if (error) {
+      console.error('Erro ao excluir:', error)
+      alert('Erro ao excluir: ' + error.message)
+    } else {
+      alert('Certidão excluída com sucesso!')
+      carregarCertidoes()
+    }
   }
 
   function formatarData(dataISO: string | null) {
@@ -74,87 +66,120 @@ export default function ListaCertidoes() {
     return Math.ceil(diff / (1000 * 60 * 60 * 24))
   }
 
-  // 3. Status Visual Profissional
-  function getStatusStyle(dias: number) {
-    if (dias < 0) return { text: 'Vencido', bg: '#fee2e2', color: '#991b1b' }
-    if (dias <= 15) return { text: `Vence em ${dias} dias`, bg: '#fef3c7', color: '#92400e' }
-    return { text: 'Válido', bg: '#dcfce7', color: '#166534' }
+  function getStatus(dias: number) {
+    if (dias < 0) return { text: 'Vencido', color: 'red' }
+    if (dias <= 15) return { text: `Vence em ${dias} dias`, color: 'orange' }
+    return { text: 'Válido', color: 'green' }
   }
 
+  // Exportação Excel
+  function exportarExcel() {
+    const dados = certidoes.map(c => ({
+      Certidão: c.nome_certidao,
+      Unidade: c.unidades?.codigo ? `${c.unidades.codigo} - ${c.unidades.razao_social}` : 'Geral',
+      Responsável: c.responsavel_nome || '',
+      Emissão: c.data_emissao,
+      Vencimento: c.vencimento,
+      Status: (() => {
+        const dias = calcularDiasRestantes(c.vencimento)
+        return dias < 0 ? 'Vencido' : dias <= 15 ? `Vence em ${dias} dias` : 'Válido'
+      })(),
+    }))
+    const ws = XLSX.utils.json_to_sheet(dados)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Certidões')
+    XLSX.writeFile(wb, 'certidoes.xlsx')
+  }
+
+  // Exportação PDF
+  function exportarPDF() {
+    const doc = new jsPDF()
+    const dataAtual = new Date().toLocaleDateString('pt-BR')
+    doc.setFontSize(16)
+    doc.text('Relatório de Certidões', 14, 20)
+    doc.setFontSize(10)
+    doc.text(`Data de emissão: ${dataAtual}`, 14, 28)
+
+    const colunas = ['Certidão', 'Unidade', 'Responsável', 'Emissão', 'Vencimento', 'Status']
+    const linhas = certidoes.map(c => {
+      const dias = calcularDiasRestantes(c.vencimento)
+      const status = dias < 0 ? 'Vencido' : dias <= 15 ? `Vence em ${dias} dias` : 'Válido'
+      return [
+        c.nome_certidao,
+        c.unidades?.codigo ? `${c.unidades.codigo} - ${c.unidades.razao_social}` : 'Geral',
+        c.responsavel_nome || '',
+        formatarData(c.data_emissao),
+        formatarData(c.vencimento),
+        status,
+      ]
+    })
+
+    autoTable(doc, { startY: 35, head: [colunas], body: linhas })
+    doc.save('certidoes.pdf')
+  }
+
+  if (loading) return <p>Carregando...</p>
+
   return (
-    <div style={{ maxWidth: '1300px', margin: '0 auto', padding: '30px' }}>
-      <h1 style={{ color: '#1e293b', marginBottom: '30px', fontWeight: 'bold' }}>Certidões</h1>
-      
-      <div style={{ marginBottom: '30px', display: 'flex', gap: '12px' }}>
+    <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>
+      <h1>Certidões</h1>
+      <div style={{ marginBottom: '20px' }}>
         <Link href="/certidoes/novo">
-          <button style={{ padding: '12px 24px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>
-            + Nova Certidão
+          <button style={{ marginRight: '10px', padding: '10px 20px', background: '#0070f3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
+            Nova Certidão
           </button>
         </Link>
-        <button onClick={() => {}} style={{ padding: '12px 24px', background: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>
-          Excel
+        <button onClick={exportarExcel} style={{ marginRight: '10px', padding: '10px 20px', background: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
+          Exportar Excel
         </button>
-        <button onClick={() => {}} style={{ padding: '12px 24px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>
-          PDF
+        <button onClick={exportarPDF} style={{ padding: '10px 20px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
+          Exportar PDF
         </button>
       </div>
 
-      {loading ? (
-        <p>Sincronizando certidões...</p>
-      ) : (
-        <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
-                <th style={{ padding: '18px', textAlign: 'left', color: '#64748b', fontSize: '13px' }}>CERTIDÃO</th>
-                <th style={{ padding: '18px', textAlign: 'left', color: '#64748b', fontSize: '13px' }}>UNIDADE</th>
-                <th style={{ padding: '18px', textAlign: 'left', color: '#64748b', fontSize: '13px' }}>RESPONSÁVEL</th>
-                <th style={{ padding: '18px', textAlign: 'left', color: '#64748b', fontSize: '13px' }}>VENCIMENTO</th>
-                <th style={{ padding: '18px', textAlign: 'left', color: '#64748b', fontSize: '13px' }}>STATUS</th>
-                <th style={{ padding: '18px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>ARQUIVO</th>
-                <th style={{ padding: '18px', textAlign: 'right', color: '#64748b', fontSize: '13px' }}>AÇÕES</th>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ background: '#f0f0f0' }}>
+            <th style={{ padding: '10px', textAlign: 'left' }}>Certidão</th>
+            <th style={{ padding: '10px', textAlign: 'left' }}>Unidade</th>
+            <th style={{ padding: '10px', textAlign: 'left' }}>Responsável</th>
+            <th style={{ padding: '10px', textAlign: 'left' }}>Emissão</th>
+            <th style={{ padding: '10px', textAlign: 'left' }}>Vencimento</th>
+            <th style={{ padding: '10px', textAlign: 'left' }}>Status</th>
+            <th style={{ padding: '10px', textAlign: 'left' }}>Arquivo</th>
+            <th style={{ padding: '10px', textAlign: 'left' }}>Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          {certidoes.map((cert) => {
+            const dias = calcularDiasRestantes(cert.vencimento)
+            const status = getStatus(dias)
+            return (
+              <tr key={cert.id} style={{ borderBottom: '1px solid #ddd' }}>
+                <td style={{ padding: '10px' }}>{cert.nome_certidao}</td>
+                <td style={{ padding: '10px' }}>
+                  {cert.unidades?.codigo ? `${cert.unidades.codigo} - ${cert.unidades.razao_social}` : 'Geral'}
+                </td>
+                <td style={{ padding: '10px' }}>{cert.responsavel_nome}</td>
+                <td style={{ padding: '10px' }}>{formatarData(cert.data_emissao)}</td>
+                <td style={{ padding: '10px' }}>{formatarData(cert.vencimento)}</td>
+                <td style={{ padding: '10px', fontWeight: 'bold', color: status.color }}>{status.text}</td>
+                <td style={{ padding: '10px' }}>
+                  {cert.arquivo_url ? (
+                    <a href={cert.arquivo_url} target="_blank" rel="noopener noreferrer">📄</a>
+                  ) : '—'}
+                </td>
+                <td style={{ padding: '10px' }}>
+                  <Link href={`/certidoes/editar/${cert.id}`}>
+                    <button style={{ marginRight: '5px', padding: '5px 10px', cursor: 'pointer' }}>Editar</button>
+                  </Link>
+                  <button onClick={() => excluirCertidao(cert.id)} style={{ padding: '5px 10px', cursor: 'pointer' }}>Excluir</button>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {certidoes.map((cert) => {
-                const dias = calcularDiasRestantes(cert.vencimento)
-                const status = getStatusStyle(dias)
-                return (
-                  <tr key={cert.id} style={{ borderBottom: '1px solid #f1f5f9', transition: 'background 0.2s' }}>
-                    <td style={{ padding: '18px', fontWeight: '600', color: '#1e293b' }}>{cert.nome_certidao}</td>
-                    <td style={{ padding: '18px', color: '#64748b', fontSize: '14px' }}>{getUnidadeInfo(cert)}</td>
-                    <td style={{ padding: '18px', color: '#64748b' }}>{cert.responsavel_nome}</td>
-                    <td style={{ padding: '18px', fontWeight: '500' }}>{formatarData(cert.vencimento)}</td>
-                    <td style={{ padding: '18px' }}>
-                      <span style={{ 
-                        padding: '6px 14px', 
-                        borderRadius: '20px', 
-                        fontSize: '12px', 
-                        fontWeight: '700', 
-                        backgroundColor: status.bg, 
-                        color: status.color 
-                      }}>
-                        {status.text}
-                      </span>
-                    </td>
-                    <td style={{ padding: '18px', textAlign: 'center' }}>
-                      {cert.arquivo_url ? (
-                        <a href={cert.arquivo_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>📄</a>
-                      ) : '—'}
-                    </td>
-                    <td style={{ padding: '18px', textAlign: 'right' }}>
-                      <Link href={`/certidoes/editar/${cert.id}`}>
-                        <button style={{ marginRight: '8px', padding: '6px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', background: 'white', cursor: 'pointer' }}>Editar</button>
-                      </Link>
-                      <button onClick={() => excluirCertidao(cert.id)} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #fee2e2', background: '#fef2f2', color: '#991b1b', cursor: 'pointer' }}>Excluir</button>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+            )
+          })}
+        </tbody>
+      </table>
     </div>
   )
 }

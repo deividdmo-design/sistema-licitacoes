@@ -5,10 +5,10 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    persistSession: true,
     autoRefreshToken: true,
+    persistSession: true,
     detectSessionInUrl: true,
-    // Solução para o erro de LockManager no Firefox
+    multiTab: false, // Evita problemas de lock
     storage: typeof window !== 'undefined' ? window.localStorage : undefined,
-  }
+  },
 })
