@@ -64,23 +64,34 @@ export default function DetalhesLicitacao() {
     return data.publicUrl
   }
 
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (e.target.files && e.target.files[0]) {
+      setFile(e.target.files[0])
+    }
+  }
+
   async function handleUpload() {
     if (!file || !licitacao) return
     setUploading(true)
     try {
       const publicUrl = await uploadFile(file)
+      // Atualizar a licitação com a nova URL
       const { error } = await supabase
         .from('licitacoes')
         .update({ arquivo_url: publicUrl })
         .eq('id', licitacao.id)
       if (error) throw error
+      // Atualizar o estado local
       setLicitacao({ ...licitacao, arquivo_url: publicUrl })
+      setFile(null)
+      // Limpar o input file
+      const fileInput = document.getElementById('file-upload') as HTMLInputElement
+      if (fileInput) fileInput.value = ''
       alert('Arquivo enviado com sucesso!')
     } catch (error: any) {
       alert('Erro ao enviar arquivo: ' + error.message)
     } finally {
       setUploading(false)
-      setFile(null)
     }
   }
 
@@ -119,9 +130,10 @@ export default function DetalhesLicitacao() {
 
         <div style={{ marginTop: '15px' }}>
           <input
+            id="file-upload"
             type="file"
             accept=".pdf"
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
+            onChange={handleFileChange}
           />
           <button
             onClick={handleUpload}
