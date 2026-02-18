@@ -8,7 +8,6 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: true,
-    multiTab: false, // Evita problemas de lock
     storage: typeof window !== 'undefined' ? window.localStorage : undefined,
   },
 })
