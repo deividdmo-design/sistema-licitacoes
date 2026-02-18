@@ -1,18 +1,15 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabaseClient'
-import AdminRoute from '../components/AdminRoute'
+import { supabase } from '../../lib/supabaseClient'
+import AdminRoute from '../../components/AdminRoute'
 
 interface Usuario {
   id: string
-  email: string
-  perfil: {
-    nome: string
-    nivel_acesso: string
-    cargo: string
-  } | null
+  email?: string
+  nivel_acesso: string
+  created_at: string
 }
 
-export default function AdminUsuarios() {
+export default function GerenciarUsuarios() {
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -22,19 +19,16 @@ export default function AdminUsuarios() {
 
   async function carregarUsuarios() {
     setLoading(true)
-    // Buscar usuários da auth.users (não é possível diretamente via SQL, mas podemos usar a tabela perfis)
-    // Na verdade, precisamos listar os perfis existentes e talvez criar uma função no banco para listar usuários.
-    // Por simplicidade, vamos listar os perfis e seus emails (que precisam ser obtidos de auth.users).
-    // Isso requer uma função no banco ou usar admin API. Vamos pular por enquanto.
-    // Em vez disso, vamos apenas listar os perfis existentes com os dados que temos.
+    // Busca os perfis vinculados aos usuários
     const { data, error } = await supabase
       .from('perfis')
       .select('*')
-    if (error) console.error(error)
-    else {
-      // Para obter emails, precisaríamos de uma função serverless ou da API de admin.
-      // Por enquanto, mostramos apenas os dados do perfil.
-      setUsuarios(data.map(p => ({ id: p.id, email: 'carregar...', perfil: p })))
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      console.error('Erro ao carregar usuários:', error.message)
+    } else {
+      setUsuarios(data || [])
     }
     setLoading(false)
   }
@@ -44,50 +38,62 @@ export default function AdminUsuarios() {
       .from('perfis')
       .update({ nivel_acesso: novoNivel })
       .eq('id', id)
-    if (error) alert('Erro ao atualizar: ' + error.message)
+
+    if (error) alert('Erro ao atualizar nível: ' + error.message)
     else carregarUsuarios()
   }
 
   return (
     <AdminRoute>
-      <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto' }}>
-        <h1>Gerenciar Perfis de Usuário</h1>
+      <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '30px' }}>
+        <h1 style={{ color: '#1e293b', marginBottom: '20px' }}>Gerenciar Acessos</h1>
+        <p style={{ color: '#64748b', marginBottom: '30px' }}>Controle quem pode acessar as funções administrativas da Nordeste.</p>
+
         {loading ? (
-          <p>Carregando...</p>
+          <p>Carregando lista de permissões...</p>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Nome</th>
-                <th>Cargo</th>
-                <th>Nível de Acesso</th>
-                <th>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {usuarios.map(u => (
-                <tr key={u.id}>
-                  <td>{u.id}</td>
-                  <td>{u.perfil?.nome}</td>
-                  <td>{u.perfil?.cargo}</td>
-                  <td>
-                    <select
-                      value={u.perfil?.nivel_acesso}
-                      onChange={(e) => alterarNivel(u.id, e.target.value)}
-                    >
-                      <option value="admin">Admin</option>
-                      <option value="comercial">Comercial</option>
-                      <option value="apoio">Apoio</option>
-                    </select>
-                  </td>
-                  <td>
-                    <button>Salvar</button>
-                  </td>
+          <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                  <th style={{ padding: '16px', textAlign: 'left', color: '#64748b' }}>Usuário (ID)</th>
+                  <th style={{ padding: '16px', textAlign: 'left', color: '#64748b' }}>Nível de Acesso</th>
+                  <th style={{ padding: '16px', textAlign: 'right', color: '#64748b' }}>Ações</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {usuarios.map((user) => (
+                  <tr key={user.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '16px', fontSize: '14px', color: '#334155' }}>
+                      {user.id}
+                    </td>
+                    <td style={{ padding: '16px' }}>
+                      <span style={{ 
+                        padding: '4px 10px', 
+                        borderRadius: '20px', 
+                        fontSize: '12px', 
+                        fontWeight: 'bold',
+                        background: user.nivel_acesso === 'admin' ? '#dcfce7' : '#f1f5f9',
+                        color: user.nivel_acesso === 'admin' ? '#166534' : '#475569'
+                      }}>
+                        {user.nivel_acesso.toUpperCase()}
+                      </span>
+                    </td>
+                    <td style={{ padding: '16px', textAlign: 'right' }}>
+                      <select 
+                        value={user.nivel_acesso} 
+                        onChange={(e) => alterarNivel(user.id, e.target.value)}
+                        style={{ padding: '5px', borderRadius: '4px', border: '1px solid #e2e8f0' }}
+                      >
+                        <option value="user">Usuário Comum</option>
+                        <option value="admin">Administrador</option>
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </AdminRoute>
