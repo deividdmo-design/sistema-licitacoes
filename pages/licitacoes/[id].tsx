@@ -1,147 +1,164 @@
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/router'
 import { supabase } from '../../lib/supabaseClient'
+import { useRouter } from 'next/router'
 import Link from 'next/link'
-
-interface Anexo {
-  id: string
-  nome_arquivo: string
-  arquivo_url: string
-  created_at: string
-}
 
 interface Licitacao {
   id: string
   identificacao: string
-  objeto: string
+  orgao_id: string
+  orgaos?: { razao_social: string }
   modalidade: string
+  tipo: string
+  objeto: string
   valor_estimado: number
   data_limite_participacao: string
+  data_resultado: string
   status: string
-  orgaos?: { razao_social: string }
+  motivo_status: string
+  possui_seguro: string
+  observacoes: string
+  arquivo_url: string | null
 }
 
-export default function DetalheLicitacao() {
+export default function DetalhesLicitacao() {
   const router = useRouter()
   const { id } = router.query
   const [licitacao, setLicitacao] = useState<Licitacao | null>(null)
-  const [anexos, setAnexos] = useState<Anexo[]>([])
   const [loading, setLoading] = useState(true)
+  const [uploading, setUploading] = useState(false)
+  const [file, setFile] = useState<File | null>(null)
 
   useEffect(() => {
-    if (id) carregarDados()
+    if (id) {
+      carregarLicitacao()
+    }
   }, [id])
 
-  async function carregarDados() {
+  async function carregarLicitacao() {
     setLoading(true)
-    
-    // Busca os detalhes da licitação
-    const { data: lic, error: licErr } = await supabase
+    const { data, error } = await supabase
       .from('licitacoes')
       .select('*, orgaos(razao_social)')
       .eq('id', id)
       .single()
-
-    if (licErr) {
-      console.error(licErr)
+    if (error) {
+      alert('Erro ao carregar licitação')
     } else {
-      // Ajuste para garantir que orgaos seja um objeto único
-      const formatada = {
-        ...lic,
-        orgaos: Array.isArray(lic.orgaos) ? lic.orgaos[0] : lic.orgaos
-      }
-      setLicitacao(formatada)
+      setLicitacao(data)
     }
-
-    // Busca os anexos vinculados
-    const { data: anx, error: anxErr } = await supabase
-      .from('licitacao_anexos')
-      .select('*')
-      .eq('licitacao_id', id)
-      .order('created_at', { ascending: false })
-
-    if (!anxErr) setAnexos(anx || [])
-    
     setLoading(false)
   }
 
-  async function excluirAnexo(anexoId: string, url: string) {
-    if (!confirm('Deseja excluir este anexo?')) return
+  async function uploadFile(file: File, licitacaoId: string) {
+    const fileExt = file.name.split('.').pop()
+    const fileName = `${licitacaoId}.${fileExt}`
+    const filePath = fileName
 
-    // 1. Correção Crítica para o Deploy: Garantindo que o path não seja undefined
-    const path = url.split('/').pop()
+    const { error } = await supabase.storage
+      .from('editais')
+      .upload(filePath, file, { upsert: true })
 
-    if (path) {
-      // Remove o arquivo físico do Storage
-      await supabase.storage.from('licitacoes').remove([path])
-    }
+    if (error) throw error
 
-    // 2. Remove o registro do banco de dados
-    await supabase.from('licitacao_anexos').delete().eq('id', anexoId)
-    
-    carregarDados()
+    const { data } = supabase.storage.from('editais').getPublicUrl(filePath)
+    return data.publicUrl
   }
 
-  if (loading) return <div style={{ padding: '40px', textAlign: 'center' }}>Carregando detalhes...</div>
-  if (!licitacao) return <div style={{ padding: '40px', textAlign: 'center' }}>Licitação não encontrada.</div>
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (e.target.files && e.target.files.length > 0) {
+      setFile(e.target.files[0])
+    }
+  }
+
+  async function handleUpload() {
+    if (!file || !licitacao) return
+
+    setUploading(true)
+    try {
+      const publicUrl = await uploadFile(file, licitacao.id)
+      const { error } = await supabase
+        .from('licitacoes')
+        .update({ arquivo_url: publicUrl })
+        .eq('id', licitacao.id)
+      if (error) throw error
+      setLicitacao({ ...licitacao, arquivo_url: publicUrl })
+      alert('Arquivo enviado com sucesso!')
+    } catch (error: any) {
+      alert('Erro ao enviar arquivo: ' + error.message)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  function formatarData(dataISO: string | null) {
+    if (!dataISO) return ''
+    const [ano, mes, dia] = dataISO.split('-')
+    return `${dia}/${mes}/${ano}`
+  }
+
+  if (loading) return <p>Carregando...</p>
+  if (!licitacao) return <p>Licitação não encontrada</p>
 
   return (
-    <div style={{ maxWidth: '900px', margin: '0 auto', padding: '30px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
-        <h1 style={{ color: '#1e293b', margin: 0 }}>{licitacao.identificacao}</h1>
+    <div style={{ maxWidth: '800px', margin: '0 auto', padding: '20px' }}>
+      <h1>{licitacao.identificacao}</h1>
+      
+      <div style={{ marginBottom: '20px' }}>
         <Link href="/licitacoes">
-          <button style={{ padding: '10px 20px', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: '8px', cursor: 'pointer' }}>Voltar</button>
+          <button style={{ padding: '5px 10px' }}>Voltar</button>
+        </Link>
+        <Link href={`/licitacoes/editar/${licitacao.id}`}>
+          <button style={{ marginLeft: '10px', padding: '5px 10px' }}>Editar</button>
         </Link>
       </div>
 
-      {/* Grid de Informações */}
-      <div style={{ background: 'white', padding: '25px', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', marginBottom: '30px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-          <div>
-            <label style={{ color: '#64748b', fontSize: '12px', fontWeight: 'bold' }}>ÓRGÃO</label>
-            <p style={{ margin: '5px 0', fontWeight: '600' }}>{licitacao.orgaos?.razao_social || '—'}</p>
-          </div>
-          <div>
-            <label style={{ color: '#64748b', fontSize: '12px', fontWeight: 'bold' }}>VALOR ESTIMADO</label>
-            <p style={{ margin: '5px 0', fontWeight: '600' }}>{licitacao.valor_estimado?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
-          </div>
-          <div>
-            <label style={{ color: '#64748b', fontSize: '12px', fontWeight: 'bold' }}>MODALIDADE</label>
-            <p style={{ margin: '5px 0' }}>{licitacao.modalidade}</p>
-          </div>
-          <div>
-            <label style={{ color: '#64748b', fontSize: '12px', fontWeight: 'bold' }}>DATA LIMITE</label>
-            <p style={{ margin: '5px 0' }}>{new Date(licitacao.data_limite_participacao).toLocaleDateString('pt-BR')}</p>
-          </div>
-        </div>
-        <div style={{ marginTop: '20px' }}>
-          <label style={{ color: '#64748b', fontSize: '12px', fontWeight: 'bold' }}>OBJETO</label>
-          <p style={{ margin: '5px 0', lineHeight: '1.6' }}>{licitacao.objeto}</p>
-        </div>
-      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <tbody>
+          <tr><td><strong>Órgão:</strong></td><td>{licitacao.orgaos?.razao_social}</td></tr>
+          <tr><td><strong>Modalidade:</strong></td><td>{licitacao.modalidade}</td></tr>
+          <tr><td><strong>Tipo:</strong></td><td>{licitacao.tipo}</td></tr>
+          <tr><td><strong>Objeto:</strong></td><td>{licitacao.objeto}</td></tr>
+          <tr><td><strong>Valor Estimado:</strong></td><td>
+            {licitacao.valor_estimado?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+          </td></tr>
+          <tr><td><strong>Data Limite:</strong></td><td>{formatarData(licitacao.data_limite_participacao)}</td></tr>
+          <tr><td><strong>Data Resultado:</strong></td><td>{formatarData(licitacao.data_resultado)}</td></tr>
+          <tr><td><strong>Status:</strong></td><td>{licitacao.status}</td></tr>
+          <tr><td><strong>Motivo:</strong></td><td>{licitacao.motivo_status}</td></tr>
+          <tr><td><strong>Seguro Garantia:</strong></td><td>{licitacao.possui_seguro}</td></tr>
+          <tr><td><strong>Observações:</strong></td><td>{licitacao.observacoes}</td></tr>
+        </tbody>
+      </table>
 
-      {/* Seção de Anexos */}
-      <div style={{ background: '#f8fafc', padding: '25px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-        <h3 style={{ marginTop: 0 }}>📁 Documentos e Anexos</h3>
-        {anexos.length === 0 ? (
-          <p style={{ color: '#94a3b8' }}>Nenhum documento anexado.</p>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {anexos.map(anexo => (
-              <div key={anexo.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #f1f5f9' }}>
-                <a href={anexo.arquivo_url} target="_blank" rel="noreferrer" style={{ color: '#3b82f6', fontWeight: '500', textDecoration: 'none' }}>
-                  📄 {anexo.nome_arquivo}
-                </a>
-                <button 
-                  onClick={() => excluirAnexo(anexo.id, anexo.arquivo_url)}
-                  style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '18px' }}
-                >
-                  🗑️
-                </button>
-              </div>
-            ))}
+      <div style={{ marginTop: '30px' }}>
+        <h3>Documentos e Anexos</h3>
+        
+        {licitacao.arquivo_url ? (
+          <div>
+            <p>Arquivo atual:</p>
+            <a href={licitacao.arquivo_url} target="_blank" rel="noopener noreferrer">
+              📄 Visualizar
+            </a>
           </div>
+        ) : (
+          <p>Nenhum arquivo anexado.</p>
         )}
+
+        <div style={{ marginTop: '20px' }}>
+          <input
+            type="file"
+            accept=".pdf"
+            onChange={handleFileChange}
+          />
+          <button
+            onClick={handleUpload}
+            disabled={!file || uploading}
+            style={{ marginLeft: '10px', padding: '5px 10px' }}
+          >
+            {uploading ? 'Enviando...' : 'Anexar arquivo'}
+          </button>
+        </div>
       </div>
     </div>
   )
