@@ -6,7 +6,8 @@ import Link from 'next/link'
 interface Anexo {
   id: string
   nome_arquivo: string
-  arquivo_url: string
+  url: string
+  tipo: string
   created_at: string
 }
 
@@ -35,32 +36,36 @@ export default function DetalheLicitacao() {
 
   async function carregarDados() {
     setLoading(true)
-    // 1. Busca detalhes da licitação
-    const { data: lic } = await supabase
-      .from('licitacoes')
-      .select('*, orgaos(razao_social)')
-      .eq('id', id)
-      .single()
+    try {
+      // 1. Busca detalhes da licitação
+      const { data: lic } = await supabase
+        .from('licitacoes')
+        .select('*, orgaos(razao_social)')
+        .eq('id', id)
+        .single()
 
-    if (lic) {
-      setLicitacao({
-        ...lic,
-        orgaos: Array.isArray(lic.orgaos) ? lic.orgaos[0] : lic.orgaos
-      })
+      if (lic) {
+        setLicitacao({
+          ...lic,
+          orgaos: Array.isArray(lic.orgaos) ? lic.orgaos[0] : lic.orgaos
+        })
+      }
+
+      // 2. Busca todos os anexos vinculados a esta licitação
+      const { data: anx } = await supabase
+        .from('licitacao_anexos')
+        .select('*')
+        .eq('licitacao_id', id)
+        .order('created_at', { ascending: false })
+
+      setAnexos(anx || [])
+    } catch (error) {
+      console.error("Erro ao carregar dados:", error)
+    } finally {
+      setLoading(false)
     }
-
-    // 2. Busca todos os anexos da nova tabela
-    const { data: anx } = await supabase
-      .from('licitacao_anexos')
-      .select('*')
-      .eq('licitacao_id', id)
-      .order('created_at', { ascending: false })
-
-    setAnexos(anx || [])
-    setLoading(false)
   }
 
-  // FUNÇÃO PARA SUBIR MÚLTIPLOS ARQUIVOS
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     if (!e.target.files || e.target.files.length === 0) return
     
@@ -69,77 +74,137 @@ export default function DetalheLicitacao() {
 
     for (const file of files) {
       try {
+        // Gera um nome único para o arquivo no storage para evitar conflitos
         const fileExt = file.name.split('.').pop()
-        const fileName = `${id}/${Math.random()}.${fileExt}` // Organiza por pasta da licitação
+        const fileName = `${id}/${Math.random().toString(36).substring(2)}.${fileExt}`
 
-        // 1. Sobe para o Storage (Bucket: editais)
+        // 1. Upload para o bucket 'editais'
         const { error: uploadError } = await supabase.storage
           .from('editais')
           .upload(fileName, file)
 
         if (uploadError) throw uploadError
 
+        // 2. Pega a URL pública do arquivo
         const { data: { publicUrl } } = supabase.storage.from('editais').getPublicUrl(fileName)
 
-        // 2. Registra na tabela licitacao_anexos
-        await supabase.from('licitacao_anexos').insert({
-          licitacao_id: id,
-          nome_arquivo: file.name,
-          arquivo_url: publicUrl
-        })
+        // 3. Insere na tabela licitacao_anexos usando as colunas do seu print (url e tipo)
+        const { error: insertError } = await supabase
+          .from('licitacao_anexos')
+          .insert({
+            licitacao_id: id,
+            nome_arquivo: file.name,
+            url: publicUrl,
+            tipo: file.type || 'application/octet-stream'
+          })
+
+        if (insertError) throw insertError
 
       } catch (error: any) {
-        alert(`Erro ao subir ${file.name}: ` + error.message)
+        console.error("Erro no upload:", error)
+        alert(`Erro ao subir o arquivo ${file.name}: ${error.message}`)
       }
     }
 
+    // Recarrega a lista de anexos após terminar todos os uploads
+    await carregarDados()
     setUploading(false)
-    carregarDados() // Atualiza a lista na tela
   }
 
-  async function excluirAnexo(anexoId: string, url: string) {
-    if (!confirm('Excluir este arquivo?')) return
-    const path = url.split('/').slice(-2).join('/') // Extrai o caminho correto do storage
+  async function excluirAnexo(anexoId: string, fileUrl: string) {
+    if (!confirm('Tem certeza que deseja excluir este anexo?')) return
     
-    await supabase.storage.from('editais').remove([path])
-    await supabase.from('licitacao_anexos').delete().eq('id', anexoId)
-    carregarDados()
+    try {
+      // Tenta extrair o caminho do arquivo no storage a partir da URL
+      const path = fileUrl.split('/storage/v1/object/public/editais/')[1]
+      
+      if (path) {
+        await supabase.storage.from('editais').remove([path])
+      }
+      
+      await supabase.from('licitacao_anexos').delete().eq('id', anexoId)
+      await carregarDados()
+    } catch (error) {
+      alert('Erro ao excluir anexo')
+    }
   }
 
-  if (loading) return <div style={{ padding: '50px' }}>Carregando...</div>
-  if (!licitacao) return <div style={{ padding: '50px' }}>Licitação não encontrada.</div>
+  if (loading) return <div style={{ padding: '50px', textAlign: 'center' }}>Sincronizando com a Nordeste...</div>
+  if (!licitacao) return <div style={{ padding: '50px', textAlign: 'center' }}>Licitação não encontrada.</div>
 
   return (
-    <div style={{ maxWidth: '900px', margin: '0 auto', padding: '30px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
-        <h1>{licitacao.identificacao}</h1>
-        <Link href="/licitacoes"><button>Voltar</button></Link>
+    <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '30px', fontFamily: 'sans-serif' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
+        <h1 style={{ color: '#0f172a', margin: 0 }}>{licitacao.identificacao}</h1>
+        <Link href="/licitacoes">
+          <button style={{ padding: '8px 16px', background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '6px', cursor: 'pointer' }}>
+            Voltar
+          </button>
+        </Link>
       </div>
 
-      <div style={{ background: '#f8fafc', padding: '20px', borderRadius: '12px', marginBottom: '30px' }}>
-        <p><strong>Órgão:</strong> {licitacao.orgaos?.razao_social}</p>
+      <div style={{ background: '#f8fafc', padding: '25px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '30px' }}>
+        <h3 style={{ marginTop: 0, color: '#334155' }}>Detalhes da Licitação</h3>
+        <p><strong>Órgão:</strong> {licitacao.orgaos?.razao_social || 'Não informado'}</p>
         <p><strong>Objeto:</strong> {licitacao.objeto}</p>
+        <p><strong>Modalidade:</strong> {licitacao.modalidade}</p>
+        <p><strong>Status:</strong> {licitacao.status}</p>
       </div>
 
-      {/* SEÇÃO DE ARQUIVOS MÚLTIPLOS */}
-      <div style={{ background: 'white', padding: '25px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-        <h3>📁 Documentos (Edital, Planilhas, etc)</h3>
+      <div style={{ background: 'white', padding: '25px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+        <h3 style={{ marginTop: 0, color: '#334155' }}>📁 Documentos da Licitação</h3>
         
-        <div style={{ marginBottom: '20px', padding: '15px', border: '2px dashed #cbd5e1', borderRadius: '8px' }}>
-          <label style={{ cursor: 'pointer', display: 'block', textAlign: 'center' }}>
-            {uploading ? 'Enviando arquivos...' : '📎 Clique aqui para selecionar vários arquivos'}
-            <input type="file" multiple onChange={handleFileUpload} hidden disabled={uploading} />
+        {/* Área de Upload */}
+        <div style={{ 
+          marginBottom: '20px', 
+          padding: '20px', 
+          border: '2px dashed #cbd5e1', 
+          borderRadius: '10px',
+          textAlign: 'center',
+          background: uploading ? '#f8fafc' : 'transparent'
+        }}>
+          <label style={{ cursor: uploading ? 'not-allowed' : 'pointer', color: '#475569' }}>
+            {uploading ? 'Aguarde, processando arquivos...' : '📎 Clique aqui para anexar vários arquivos (Edital, Planilhas, TR)'}
+            <input 
+              type="file" 
+              multiple 
+              onChange={handleFileUpload} 
+              hidden 
+              disabled={uploading} 
+            />
           </label>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {anexos.length === 0 && <p style={{ color: '#94a3b8' }}>Nenhum arquivo anexado.</p>}
-          {anexos.map(anexo => (
-            <div key={anexo.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px', background: '#f1f5f9', borderRadius: '8px' }}>
-              <a href={anexo.arquivo_url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', color: '#2563eb', fontWeight: '500' }}>
+        {/* Lista de Arquivos */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {anexos.length === 0 && !uploading && (
+            <p style={{ color: '#94a3b8', textAlign: 'center' }}>Nenhum documento anexado ainda.</p>
+          )}
+          
+          {anexos.map((anexo) => (
+            <div key={anexo.id} style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              padding: '12px 16px', 
+              background: '#f1f5f9', 
+              borderRadius: '8px',
+              border: '1px solid #e2e8f0'
+            }}>
+              <a 
+                href={anexo.url} 
+                target="_blank" 
+                rel="noreferrer" 
+                style={{ textDecoration: 'none', color: '#2563eb', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '8px' }}
+              >
                 📄 {anexo.nome_arquivo}
               </a>
-              <button onClick={() => excluirAnexo(anexo.id, anexo.arquivo_url)} style={{ color: 'red', border: 'none', background: 'none', cursor: 'pointer' }}>Excluir</button>
+              <button 
+                onClick={() => excluirAnexo(anexo.id, anexo.url)}
+                style={{ color: '#991b1b', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                Excluir
+              </button>
             </div>
           ))}
         </div>
