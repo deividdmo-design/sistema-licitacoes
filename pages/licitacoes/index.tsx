@@ -10,7 +10,7 @@ interface Licitacao {
   id: string
   identificacao: string
   orgao_id: string
-  orgaos?: { razao_social: string } | { razao_social: string }[]
+  orgaos?: { razao_social: string }
   modalidade: string
   valor_estimado: number
   data_limite_participacao: string
@@ -31,56 +31,25 @@ export default function ListaLicitacoes() {
       .from('licitacoes')
       .select('*, orgaos(razao_social)')
       .order('data_limite_participacao', { ascending: false })
-    
     if (error) {
-      console.error("Erro ao carregar:", error)
+      console.error('Erro ao carregar licitações:', error)
+      alert('Erro ao carregar dados. Verifique o console.')
     } else {
-      const formatado = data?.map((lic: any) => ({
-        ...lic,
-        orgaos: Array.isArray(lic.orgaos) ? lic.orgaos[0] : lic.orgaos
-      }))
-      setLicitacoes(formatado || [])
+      setLicitacoes(data || [])
     }
     setLoading(false)
   }
 
-  // FUNÇÃO DE EXCLUSÃO CORRIGIDA
   async function excluirLicitacao(id: string) {
-    // Log para confirmar que o clique funcionou (Ver no F12)
-    console.log("%c -> TENTANDO EXCLUIR LICITAÇÃO ID: " + id, "color: white; background: red; font-size: 16px; padding: 5px;");
-
-    const confirmacao = window.confirm('Tem certeza que deseja excluir esta licitação? Isso apagará os dados permanentemente.');
-    if (!confirmacao) return;
-
-    try {
-      setLoading(true);
-      const { error } = await supabase
-        .from('licitacoes')
-        .delete()
-        .eq('id', id);
-
-      if (error) {
-        console.error("Erro detalhado do Supabase:", error);
-        if (error.code === '23503') {
-          alert('Erro de Integridade: Esta licitação possui contratos ou anexos vinculados. Exclua-os primeiro.');
-        } else {
-          alert('Erro ao excluir: ' + error.message);
-        }
-      } else {
-        alert('Licitação removida com sucesso!');
-        await carregarLicitacoes(); // Recarrega a lista atualizada
-      }
-    } catch (err) {
-      console.error("Erro inesperado no sistema:", err);
-      alert('Erro crítico ao processar a exclusão.');
-    } finally {
-      setLoading(false);
+    if (!confirm('Tem certeza que deseja excluir esta licitação?')) return
+    const { error } = await supabase.from('licitacoes').delete().eq('id', id)
+    if (error) {
+      console.error('Erro ao excluir:', error)
+      alert('Erro ao excluir: ' + error.message)
+    } else {
+      alert('Licitação excluída com sucesso!')
+      carregarLicitacoes()
     }
-  }
-
-  const getRazaoSocial = (lic: Licitacao) => {
-    const orgaoData: any = lic.orgaos
-    return Array.isArray(orgaoData) ? orgaoData[0]?.razao_social : orgaoData?.razao_social
   }
 
   function formatarData(dataISO: string | null) {
@@ -89,73 +58,112 @@ export default function ListaLicitacoes() {
     return `${dia}/${mes}/${ano}`
   }
 
+  // Exportação Excel
+  function exportarExcel() {
+    const dados = licitacoes.map(lic => ({
+      Identificação: lic.identificacao,
+      'Órgão': lic.orgaos?.razao_social || '',
+      Modalidade: lic.modalidade || '',
+      'Valor Estimado': lic.valor_estimado || 0,
+      'Data Limite': lic.data_limite_participacao || '',
+      Status: lic.status || '',
+    }))
+    const ws = XLSX.utils.json_to_sheet(dados)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Licitações')
+    XLSX.writeFile(wb, 'licitacoes.xlsx')
+  }
+
+  // Exportação PDF
+  function exportarPDF() {
+    const doc = new jsPDF()
+    const dataAtual = new Date().toLocaleDateString('pt-BR')
+    doc.setFontSize(16)
+    doc.text('Relatório de Licitações', 14, 20)
+    doc.setFontSize(10)
+    doc.text(`Data de emissão: ${dataAtual}`, 14, 28)
+
+    const colunas = ['Identificação', 'Órgão', 'Modalidade', 'Valor Estimado', 'Data Limite', 'Status']
+    const linhas = licitacoes.map(lic => [
+      lic.identificacao,
+      lic.orgaos?.razao_social || '',
+      lic.modalidade || '',
+      lic.valor_estimado ? `R$ ${lic.valor_estimado.toFixed(2)}` : '',
+      formatarData(lic.data_limite_participacao),
+      lic.status || '',
+    ])
+
+    autoTable(doc, { startY: 35, head: [colunas], body: linhas })
+    doc.save('licitacoes.pdf')
+  }
+
+  if (loading) return <p>Carregando...</p>
+
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>
-      <h1 style={{ color: '#1e293b', marginBottom: '30px' }}>Licitações Nordeste</h1>
-      
-      <div style={{ marginBottom: '30px', display: 'flex', gap: '10px' }}>
+      <h1>Licitações</h1>
+      <div style={{ marginBottom: '20px' }}>
         <Link href="/licitacoes/novo">
-          <button style={{ padding: '10px 20px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>
-            + Nova Licitação
+          <button style={{ marginRight: '10px', padding: '10px 20px', background: '#0070f3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
+            Nova Licitação
           </button>
         </Link>
+        <button onClick={exportarExcel} style={{ marginRight: '10px', padding: '10px 20px', background: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
+          Exportar Excel
+        </button>
+        <button onClick={exportarPDF} style={{ padding: '10px 20px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
+          Exportar PDF
+        </button>
       </div>
 
-      {loading ? (
-        <p>Sincronizando dados...</p>
-      ) : (
-        <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
-                <th style={{ padding: '16px', textAlign: 'left' }}>Identificação</th>
-                <th style={{ padding: '16px', textAlign: 'left' }}>Órgão</th>
-                <th style={{ padding: '16px', textAlign: 'left' }}>Valor</th>
-                <th style={{ padding: '16px', textAlign: 'left' }}>Status</th>
-                <th style={{ padding: '16px', textAlign: 'right' }}>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {licitacoes.map((lic) => (
-                <tr key={lic.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                  <td style={{ padding: '16px', fontWeight: '600' }}>
-                    <Link href={`/licitacoes/${lic.id}`} style={{ color: '#3b82f6', textDecoration: 'none' }}>{lic.identificacao}</Link>
-                  </td>
-                  <td style={{ padding: '16px' }}>{getRazaoSocial(lic) || '—'}</td>
-                  <td style={{ padding: '16px' }}>
-                    {lic.valor_estimado?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                  </td>
-                  <td style={{ padding: '16px' }}>
-                    <span style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '600', background: '#dcfce7', color: '#166534' }}>
-                      {lic.status}
-                    </span>
-                  </td>
-                  <td style={{ padding: '16px', textAlign: 'right' }}>
-                    {/* BOTÕES DE AÇÃO */}
-                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                      <Link href={`/licitacoes/editar/${lic.id}`}>
-                        <button style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', background: 'white', cursor: 'pointer' }}>
-                          Editar
-                        </button>
-                      </Link>
-                      
-                      <button 
-                        onClick={(e) => {
-                          e.preventDefault();
-                          excluirLicitacao(lic.id);
-                        }}
-                        style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #fee2e2', background: '#fef2f2', color: '#991b1b', cursor: 'pointer' }}
-                      >
-                        Excluir
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ background: '#f0f0f0' }}>
+            <th style={{ padding: '10px', textAlign: 'left' }}>Identificação</th>
+            <th style={{ padding: '10px', textAlign: 'left' }}>Órgão</th>
+            <th style={{ padding: '10px', textAlign: 'left' }}>Modalidade</th>
+            <th style={{ padding: '10px', textAlign: 'left' }}>Valor</th>
+            <th style={{ padding: '10px', textAlign: 'left' }}>Data Limite</th>
+            <th style={{ padding: '10px', textAlign: 'left' }}>Status</th>
+            <th style={{ padding: '10px', textAlign: 'left' }}>Calendário</th>
+            <th style={{ padding: '10px', textAlign: 'left' }}>Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          {licitacoes.map((lic) => (
+            <tr key={lic.id} style={{ borderBottom: '1px solid #ddd' }}>
+              <td style={{ padding: '10px' }}>
+                <Link href={`/licitacoes/${lic.id}`}>{lic.identificacao}</Link>
+              </td>
+              <td style={{ padding: '10px' }}>{lic.orgaos?.razao_social || '—'}</td>
+              <td style={{ padding: '10px' }}>{lic.modalidade}</td>
+              <td style={{ padding: '10px' }}>
+                {lic.valor_estimado?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+              </td>
+              <td style={{ padding: '10px' }}>{formatarData(lic.data_limite_participacao)}</td>
+              <td style={{ padding: '10px' }}>{lic.status}</td>
+              <td style={{ padding: '10px', textAlign: 'center' }}>
+                {lic.data_limite_participacao ? (
+                  <a
+                    href={linkLicitacaoCalendario(lic)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Adicionar ao Google Calendar"
+                  >
+                    📅
+                  </a>
+                ) : '—'}
+              </td>
+              <td style={{ padding: '10px' }}>
+                <Link href={`/licitacoes/editar/${lic.id}`}>
+                  <button style={{ marginRight: '5px', padding: '5px 10px', cursor: 'pointer' }}>Editar</button>
+                </Link>
+                <button onClick={() => excluirLicitacao(lic.id)} style={{ padding: '5px 10px', cursor: 'pointer' }}>Excluir</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
