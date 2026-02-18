@@ -6,8 +6,8 @@ import Link from 'next/link'
 interface Anexo {
   id: string
   nome_arquivo: string
-  url: string
-  tipo: string
+  arquivo_url: string
+  tipo_documento: string
   created_at: string
 }
 
@@ -37,7 +37,6 @@ export default function DetalheLicitacao() {
   async function carregarDados() {
     setLoading(true)
     try {
-      // 1. Busca detalhes da licitação
       const { data: lic } = await supabase
         .from('licitacoes')
         .select('*, orgaos(razao_social)')
@@ -51,7 +50,6 @@ export default function DetalheLicitacao() {
         })
       }
 
-      // 2. Busca todos os anexos vinculados a esta licitação
       const { data: anx } = await supabase
         .from('licitacao_anexos')
         .select('*')
@@ -74,28 +72,25 @@ export default function DetalheLicitacao() {
 
     for (const file of files) {
       try {
-        // Gera um nome único para o arquivo no storage para evitar conflitos
         const fileExt = file.name.split('.').pop()
         const fileName = `${id}/${Math.random().toString(36).substring(2)}.${fileExt}`
 
-        // 1. Upload para o bucket 'editais'
         const { error: uploadError } = await supabase.storage
           .from('editais')
           .upload(fileName, file)
 
         if (uploadError) throw uploadError
 
-        // 2. Pega a URL pública do arquivo
         const { data: { publicUrl } } = supabase.storage.from('editais').getPublicUrl(fileName)
 
-        // 3. Insere na tabela licitacao_anexos usando as colunas do seu print (url e tipo)
+        // AJUSTADO PARA AS COLUNAS: arquivo_url e tipo_documento
         const { error: insertError } = await supabase
           .from('licitacao_anexos')
           .insert({
             licitacao_id: id,
             nome_arquivo: file.name,
-            url: publicUrl,
-            tipo: file.type || 'application/octet-stream'
+            arquivo_url: publicUrl,
+            tipo_documento: file.type || 'application/pdf'
           })
 
         if (insertError) throw insertError
@@ -106,7 +101,6 @@ export default function DetalheLicitacao() {
       }
     }
 
-    // Recarrega a lista de anexos após terminar todos os uploads
     await carregarDados()
     setUploading(false)
   }
@@ -115,7 +109,6 @@ export default function DetalheLicitacao() {
     if (!confirm('Tem certeza que deseja excluir este anexo?')) return
     
     try {
-      // Tenta extrair o caminho do arquivo no storage a partir da URL
       const path = fileUrl.split('/storage/v1/object/public/editais/')[1]
       
       if (path) {
@@ -147,14 +140,12 @@ export default function DetalheLicitacao() {
         <h3 style={{ marginTop: 0, color: '#334155' }}>Detalhes da Licitação</h3>
         <p><strong>Órgão:</strong> {licitacao.orgaos?.razao_social || 'Não informado'}</p>
         <p><strong>Objeto:</strong> {licitacao.objeto}</p>
-        <p><strong>Modalidade:</strong> {licitacao.modalidade}</p>
         <p><strong>Status:</strong> {licitacao.status}</p>
       </div>
 
       <div style={{ background: 'white', padding: '25px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-        <h3 style={{ marginTop: 0, color: '#334155' }}>📁 Documentos da Licitação</h3>
+        <h3 style={{ marginTop: 0, color: '#334155' }}>📁 Documentos (Editais, Planilhas, TR)</h3>
         
-        {/* Área de Upload */}
         <div style={{ 
           marginBottom: '20px', 
           padding: '20px', 
@@ -164,7 +155,7 @@ export default function DetalheLicitacao() {
           background: uploading ? '#f8fafc' : 'transparent'
         }}>
           <label style={{ cursor: uploading ? 'not-allowed' : 'pointer', color: '#475569' }}>
-            {uploading ? 'Aguarde, processando arquivos...' : '📎 Clique aqui para anexar vários arquivos (Edital, Planilhas, TR)'}
+            {uploading ? 'Processando arquivos...' : '📎 Clique para anexar múltiplos arquivos'}
             <input 
               type="file" 
               multiple 
@@ -175,10 +166,9 @@ export default function DetalheLicitacao() {
           </label>
         </div>
 
-        {/* Lista de Arquivos */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {anexos.length === 0 && !uploading && (
-            <p style={{ color: '#94a3b8', textAlign: 'center' }}>Nenhum documento anexado ainda.</p>
+            <p style={{ color: '#94a3b8', textAlign: 'center' }}>Nenhum documento anexado.</p>
           )}
           
           {anexos.map((anexo) => (
@@ -192,7 +182,7 @@ export default function DetalheLicitacao() {
               border: '1px solid #e2e8f0'
             }}>
               <a 
-                href={anexo.url} 
+                href={anexo.arquivo_url} 
                 target="_blank" 
                 rel="noreferrer" 
                 style={{ textDecoration: 'none', color: '#2563eb', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '8px' }}
@@ -200,7 +190,7 @@ export default function DetalheLicitacao() {
                 📄 {anexo.nome_arquivo}
               </a>
               <button 
-                onClick={() => excluirAnexo(anexo.id, anexo.url)}
+                onClick={() => excluirAnexo(anexo.id, anexo.arquivo_url)}
                 style={{ color: '#991b1b', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
               >
                 Excluir
