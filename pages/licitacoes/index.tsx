@@ -73,7 +73,11 @@ export default function ListaLicitacoes() {
           <tbody>
             {licitacoes.map((lic) => (
               <tr key={lic.id} style={{ borderBottom: '1px solid #ddd' }}>
-                <td style={{ padding: '10px' }}>{lic.identificacao}</td>
+                <td style={{ padding: '10px' }}>
+                  <Link href={`/licitacoes/${lic.id}`}>
+                    {lic.identificacao}
+                  </Link>
+                </td>
                 <td style={{ padding: '10px' }}>{lic.orgaos?.razao_social}</td>
                 <td style={{ padding: '10px' }}>{lic.modalidade}</td>
                 <td style={{ padding: '10px' }}>

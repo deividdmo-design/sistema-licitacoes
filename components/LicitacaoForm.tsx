@@ -48,7 +48,9 @@ export default function LicitacaoForm({ licitacaoId }: LicitacaoFormProps) {
   const router = useRouter()
   const [orgaos, setOrgaos] = useState<Orgao[]>([])
   const [loading, setLoading] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [valorNaoDivulgado, setValorNaoDivulgado] = useState(false)
+  const [file, setFile] = useState<File | null>(null)
 
   const [formData, setFormData] = useState({
     identificacao: '',
@@ -62,7 +64,8 @@ export default function LicitacaoForm({ licitacaoId }: LicitacaoFormProps) {
     status: '',
     motivo_status: '',
     possui_seguro: '',
-    observacoes: ''
+    observacoes: '',
+    arquivo_url: ''
   })
 
   useEffect(() => {
@@ -90,9 +93,6 @@ export default function LicitacaoForm({ licitacaoId }: LicitacaoFormProps) {
     if (error) {
       alert('Erro ao carregar licitação')
     } else if (data) {
-      if (data.valor_estimado === null) {
-        setValorNaoDivulgado(true)
-      }
       setFormData({
         identificacao: data.identificacao || '',
         orgao_id: data.orgao_id || '',
@@ -105,8 +105,10 @@ export default function LicitacaoForm({ licitacaoId }: LicitacaoFormProps) {
         status: data.status || '',
         motivo_status: data.motivo_status || '',
         possui_seguro: data.possui_seguro || '',
-        observacoes: data.observacoes || ''
+        observacoes: data.observacoes || '',
+        arquivo_url: data.arquivo_url || ''
       })
+      if (data.valor_estimado === null) setValorNaoDivulgado(true)
     }
     setLoading(false)
   }
@@ -127,57 +129,93 @@ export default function LicitacaoForm({ licitacaoId }: LicitacaoFormProps) {
     setFormData({ ...formData, valor_estimado: valorFormatado })
   }
 
-  const handleValorNaoDivulgadoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const checked = e.target.checked
-    setValorNaoDivulgado(checked)
-    if (checked) {
-      setFormData({ ...formData, valor_estimado: '' })
-    }
+  async function uploadFile(file: File, id: string) {
+    const fileExt = file.name.split('.').pop()
+    const fileName = `${id}.${fileExt}`
+    const filePath = fileName
+
+    const { error } = await supabase.storage
+      .from('editais')
+      .upload(filePath, file, { upsert: true })
+
+    if (error) throw error
+
+    const { data } = supabase.storage.from('editais').getPublicUrl(filePath)
+    return data.publicUrl
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
 
-    let valorNumerico = null
-    if (!valorNaoDivulgado && formData.valor_estimado) {
-      valorNumerico = parseFloat(formData.valor_estimado.replace(/\./g, '').replace(',', '.'))
-    }
+    try {
+      let valorNumerico = null
+      if (!valorNaoDivulgado && formData.valor_estimado) {
+        valorNumerico = parseFloat(formData.valor_estimado.replace(/\./g, '').replace(',', '.'))
+      }
 
-    const dadosParaSalvar = {
-      identificacao: formData.identificacao,
-      orgao_id: formData.orgao_id || null,
-      modalidade: formData.modalidade || null,
-      tipo: formData.tipo || null,
-      objeto: formData.objeto || null,
-      valor_estimado: valorNumerico,
-      data_limite_participacao: formData.data_limite_participacao || null,
-      data_resultado: formData.data_resultado || null,
-      status: formData.status || null,
-      motivo_status: formData.motivo_status || null,
-      possui_seguro: formData.possui_seguro || null,
-      observacoes: formData.observacoes || null
-    }
+      const dadosParaSalvar = {
+        identificacao: formData.identificacao,
+        orgao_id: formData.orgao_id || null,
+        modalidade: formData.modalidade || null,
+        tipo: formData.tipo || null,
+        objeto: formData.objeto || null,
+        valor_estimado: valorNumerico,
+        data_limite_participacao: formData.data_limite_participacao || null,
+        data_resultado: formData.data_resultado || null,
+        status: formData.status || null,
+        motivo_status: formData.motivo_status || null,
+        possui_seguro: formData.possui_seguro || null,
+        observacoes: formData.observacoes || null,
+        arquivo_url: formData.arquivo_url || null
+      }
 
-    let error
-    if (licitacaoId) {
-      const { error: err } = await supabase
-        .from('licitacoes')
-        .update(dadosParaSalvar)
-        .eq('id', licitacaoId)
-      error = err
-    } else {
-      const { error: err } = await supabase
-        .from('licitacoes')
-        .insert([dadosParaSalvar])
-      error = err
-    }
+      if (licitacaoId) {
+        // Atualizar
+        const { error } = await supabase
+          .from('licitacoes')
+          .update(dadosParaSalvar)
+          .eq('id', licitacaoId)
+        if (error) throw error
 
-    setLoading(false)
-    if (error) {
-      alert('Erro ao salvar: ' + error.message)
-    } else {
+        // Se tiver novo arquivo, fazer upload e atualizar
+        if (file) {
+          setUploading(true)
+          const publicUrl = await uploadFile(file, licitacaoId)
+          const { error: updateError } = await supabase
+            .from('licitacoes')
+            .update({ arquivo_url: publicUrl })
+            .eq('id', licitacaoId)
+          if (updateError) throw updateError
+          setUploading(false)
+        }
+      } else {
+        // Inserir
+        const { data: inserted, error } = await supabase
+          .from('licitacoes')
+          .insert([dadosParaSalvar])
+          .select('id')
+          .single()
+        if (error) throw error
+
+        // Se tiver arquivo, fazer upload com o novo ID
+        if (file) {
+          setUploading(true)
+          const publicUrl = await uploadFile(file, inserted.id)
+          const { error: updateError } = await supabase
+            .from('licitacoes')
+            .update({ arquivo_url: publicUrl })
+            .eq('id', inserted.id)
+          if (updateError) throw updateError
+          setUploading(false)
+        }
+      }
+
       router.push('/licitacoes')
+    } catch (error: any) {
+      alert('Erro ao salvar: ' + error.message)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -262,7 +300,7 @@ export default function LicitacaoForm({ licitacaoId }: LicitacaoFormProps) {
           <input
             type="checkbox"
             checked={valorNaoDivulgado}
-            onChange={handleValorNaoDivulgadoChange}
+            onChange={(e) => setValorNaoDivulgado(e.target.checked)}
           />
           {' '}Valor não divulgado
         </label>
@@ -352,8 +390,29 @@ export default function LicitacaoForm({ licitacaoId }: LicitacaoFormProps) {
         />
       </div>
 
-      <button type="submit" disabled={loading} style={{ padding: '10px 20px' }}>
-        {loading ? 'Salvando...' : 'Salvar'}
+      <div style={{ marginBottom: '15px' }}>
+        <label style={{ display: 'block', marginBottom: '5px' }}>Arquivo (Edital/Anexo)</label>
+        <input
+          type="file"
+          accept=".pdf"
+          onChange={(e) => setFile(e.target.files?.[0] || null)}
+          style={{ width: '100%', padding: '8px' }}
+        />
+        {formData.arquivo_url && (
+          <div style={{ marginTop: '5px' }}>
+            <a href={formData.arquivo_url} target="_blank" rel="noopener noreferrer">
+              Ver arquivo atual
+            </a>
+          </div>
+        )}
+      </div>
+
+      <button
+        type="submit"
+        disabled={loading || uploading}
+        style={{ padding: '10px 20px', background: '#0070f3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
+      >
+        {loading ? 'Salvando...' : uploading ? 'Enviando arquivo...' : 'Salvar'}
       </button>
     </form>
   )
