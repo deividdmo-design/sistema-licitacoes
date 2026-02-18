@@ -8,7 +8,7 @@ interface Anexo {
   nome_arquivo: string
   arquivo_url: string
   tipo_documento: string
-  created_at: string
+  data_upload: string // NOME CORRIGIDO AQUI
 }
 
 interface Licitacao {
@@ -50,11 +50,12 @@ export default function DetalheLicitacao() {
         })
       }
 
+      // CORREÇÃO: Ordenar por 'data_upload' em vez de 'created_at'
       const { data: anx } = await supabase
         .from('licitacao_anexos')
         .select('*')
         .eq('licitacao_id', id)
-        .order('created_at', { ascending: false })
+        .order('data_upload', { ascending: false }) // AQUI ESTAVA O ERRO
 
       setAnexos(anx || [])
     } catch (error) {
@@ -83,7 +84,6 @@ export default function DetalheLicitacao() {
 
         const { data: { publicUrl } } = supabase.storage.from('editais').getPublicUrl(fileName)
 
-        // AJUSTADO PARA AS COLUNAS: arquivo_url e tipo_documento
         const { error: insertError } = await supabase
           .from('licitacao_anexos')
           .insert({
@@ -91,6 +91,7 @@ export default function DetalheLicitacao() {
             nome_arquivo: file.name,
             arquivo_url: publicUrl,
             tipo_documento: file.type || 'application/pdf'
+            // O campo data_upload é preenchido automaticamente pelo banco
           })
 
         if (insertError) throw insertError
@@ -109,16 +110,28 @@ export default function DetalheLicitacao() {
     if (!confirm('Tem certeza que deseja excluir este anexo?')) return
     
     try {
-      const path = fileUrl.split('/storage/v1/object/public/editais/')[1]
-      
-      if (path) {
-        await supabase.storage.from('editais').remove([path])
+      // Tenta remover do Storage
+      if (fileUrl) {
+        const path = fileUrl.split('/storage/v1/object/public/editais/')[1]
+        if (path) {
+          await supabase.storage.from('editais').remove([path])
+        }
       }
       
-      await supabase.from('licitacao_anexos').delete().eq('id', anexoId)
+      // Remove do Banco de Dados
+      const { error } = await supabase
+        .from('licitacao_anexos')
+        .delete()
+        .eq('id', anexoId)
+
+      if (error) throw error
+
+      // Atualiza a lista na tela
       await carregarDados()
-    } catch (error) {
-      alert('Erro ao excluir anexo')
+      
+    } catch (error: any) {
+      console.error("Erro ao excluir:", error)
+      alert('Erro ao excluir anexo: ' + error.message)
     }
   }
 
@@ -155,7 +168,7 @@ export default function DetalheLicitacao() {
           background: uploading ? '#f8fafc' : 'transparent'
         }}>
           <label style={{ cursor: uploading ? 'not-allowed' : 'pointer', color: '#475569' }}>
-            {uploading ? 'Processando arquivos...' : '📎 Clique para anexar múltiplos arquivos'}
+            {uploading ? 'Processando arquivos...' : '📎 Clique aqui para anexar múltiplos arquivos'}
             <input 
               type="file" 
               multiple 
@@ -168,7 +181,7 @@ export default function DetalheLicitacao() {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {anexos.length === 0 && !uploading && (
-            <p style={{ color: '#94a3b8', textAlign: 'center' }}>Nenhum documento anexado.</p>
+            <p style={{ color: '#94a3b8', textAlign: 'center' }}>Nenhum documento anexado ainda.</p>
           )}
           
           {anexos.map((anexo) => (
