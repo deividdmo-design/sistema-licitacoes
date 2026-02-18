@@ -1,157 +1,148 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../../lib/supabaseClient'
 import { useRouter } from 'next/router'
+import { supabase } from '../../lib/supabaseClient'
 import Link from 'next/link'
+
+interface Anexo {
+  id: string
+  nome_arquivo: string
+  arquivo_url: string
+  created_at: string
+}
 
 interface Licitacao {
   id: string
   identificacao: string
-  orgao_id: string
-  orgaos?: { razao_social: string }
-  modalidade: string
-  tipo: string
   objeto: string
+  modalidade: string
   valor_estimado: number
   data_limite_participacao: string
-  data_resultado: string
   status: string
-  motivo_status: string
-  possui_seguro: string
-  observacoes: string
-  arquivo_url: string | null
+  orgaos?: { razao_social: string }
 }
 
-export default function DetalhesLicitacao() {
+export default function DetalheLicitacao() {
   const router = useRouter()
   const { id } = router.query
   const [licitacao, setLicitacao] = useState<Licitacao | null>(null)
+  const [anexos, setAnexos] = useState<Anexo[]>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
-  const [file, setFile] = useState<File | null>(null)
 
   useEffect(() => {
-    if (id) carregarLicitacao()
+    if (id) carregarDados()
   }, [id])
 
-  async function carregarLicitacao() {
+  async function carregarDados() {
     setLoading(true)
-    const { data, error } = await supabase
+    // 1. Busca detalhes da licitação
+    const { data: lic } = await supabase
       .from('licitacoes')
       .select('*, orgaos(razao_social)')
       .eq('id', id)
       .single()
-    if (error) {
-      alert('Erro ao carregar licitação')
-      router.push('/licitacoes')
-    } else {
-      setLicitacao(data)
+
+    if (lic) {
+      setLicitacao({
+        ...lic,
+        orgaos: Array.isArray(lic.orgaos) ? lic.orgaos[0] : lic.orgaos
+      })
     }
+
+    // 2. Busca todos os anexos da nova tabela
+    const { data: anx } = await supabase
+      .from('licitacao_anexos')
+      .select('*')
+      .eq('licitacao_id', id)
+      .order('created_at', { ascending: false })
+
+    setAnexos(anx || [])
     setLoading(false)
   }
 
-  async function uploadFile(file: File) {
-    const fileExt = file.name.split('.').pop()
-    const fileName = `${id}.${fileExt}`
-    const filePath = fileName
-
-    const { error } = await supabase.storage
-      .from('editais')
-      .upload(filePath, file, { upsert: true })
-
-    if (error) throw error
-
-    const { data } = supabase.storage.from('editais').getPublicUrl(filePath)
-    return data.publicUrl
-  }
-
-  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0])
-    }
-  }
-
-  async function handleUpload() {
-    if (!file || !licitacao) return
+  // FUNÇÃO PARA SUBIR MÚLTIPLOS ARQUIVOS
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!e.target.files || e.target.files.length === 0) return
+    
     setUploading(true)
-    try {
-      const publicUrl = await uploadFile(file)
-      // Atualizar a licitação com a nova URL
-      const { error } = await supabase
-        .from('licitacoes')
-        .update({ arquivo_url: publicUrl })
-        .eq('id', licitacao.id)
-      if (error) throw error
-      // Atualizar o estado local
-      setLicitacao({ ...licitacao, arquivo_url: publicUrl })
-      setFile(null)
-      // Limpar o input file
-      const fileInput = document.getElementById('file-upload') as HTMLInputElement
-      if (fileInput) fileInput.value = ''
-      alert('Arquivo enviado com sucesso!')
-    } catch (error: any) {
-      alert('Erro ao enviar arquivo: ' + error.message)
-    } finally {
-      setUploading(false)
+    const files = Array.from(e.target.files)
+
+    for (const file of files) {
+      try {
+        const fileExt = file.name.split('.').pop()
+        const fileName = `${id}/${Math.random()}.${fileExt}` // Organiza por pasta da licitação
+
+        // 1. Sobe para o Storage (Bucket: editais)
+        const { error: uploadError } = await supabase.storage
+          .from('editais')
+          .upload(fileName, file)
+
+        if (uploadError) throw uploadError
+
+        const { data: { publicUrl } } = supabase.storage.from('editais').getPublicUrl(fileName)
+
+        // 2. Registra na tabela licitacao_anexos
+        await supabase.from('licitacao_anexos').insert({
+          licitacao_id: id,
+          nome_arquivo: file.name,
+          arquivo_url: publicUrl
+        })
+
+      } catch (error: any) {
+        alert(`Erro ao subir ${file.name}: ` + error.message)
+      }
     }
+
+    setUploading(false)
+    carregarDados() // Atualiza a lista na tela
   }
 
-  if (loading) return <p>Carregando...</p>
-  if (!licitacao) return <p>Licitação não encontrada</p>
+  async function excluirAnexo(anexoId: string, url: string) {
+    if (!confirm('Excluir este arquivo?')) return
+    const path = url.split('/').slice(-2).join('/') // Extrai o caminho correto do storage
+    
+    await supabase.storage.from('editais').remove([path])
+    await supabase.from('licitacao_anexos').delete().eq('id', anexoId)
+    carregarDados()
+  }
+
+  if (loading) return <div style={{ padding: '50px' }}>Carregando...</div>
+  if (!licitacao) return <div style={{ padding: '50px' }}>Licitação não encontrada.</div>
 
   return (
-    <div style={{ maxWidth: '800px', margin: '0 auto', padding: '20px' }}>
-      <h1>{licitacao.identificacao}</h1>
+    <div style={{ maxWidth: '900px', margin: '0 auto', padding: '30px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
+        <h1>{licitacao.identificacao}</h1>
+        <Link href="/licitacoes"><button>Voltar</button></Link>
+      </div>
 
-      <div style={{ marginBottom: '20px' }}>
+      <div style={{ background: '#f8fafc', padding: '20px', borderRadius: '12px', marginBottom: '30px' }}>
         <p><strong>Órgão:</strong> {licitacao.orgaos?.razao_social}</p>
-        <p><strong>Modalidade:</strong> {licitacao.modalidade}</p>
-        <p><strong>Tipo:</strong> {licitacao.tipo}</p>
         <p><strong>Objeto:</strong> {licitacao.objeto}</p>
-        <p><strong>Valor estimado:</strong> {licitacao.valor_estimado?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
-        <p><strong>Data limite:</strong> {new Date(licitacao.data_limite_participacao).toLocaleDateString('pt-BR')}</p>
-        <p><strong>Data resultado:</strong> {licitacao.data_resultado ? new Date(licitacao.data_resultado).toLocaleDateString('pt-BR') : '-'}</p>
-        <p><strong>Status:</strong> {licitacao.status}</p>
-        <p><strong>Motivo:</strong> {licitacao.motivo_status}</p>
-        <p><strong>Seguro garantia:</strong> {licitacao.possui_seguro}</p>
-        <p><strong>Observações:</strong> {licitacao.observacoes}</p>
       </div>
 
-      <div style={{ marginBottom: '20px' }}>
-        <h2>Arquivo do Edital / Anexo</h2>
-        {licitacao.arquivo_url ? (
-          <div>
-            <a href={licitacao.arquivo_url} target="_blank" rel="noopener noreferrer">
-              📄 Ver arquivo atual
-            </a>
-          </div>
-        ) : (
-          <p>Nenhum arquivo anexado.</p>
-        )}
-
-        <div style={{ marginTop: '15px' }}>
-          <input
-            id="file-upload"
-            type="file"
-            accept=".pdf"
-            onChange={handleFileChange}
-          />
-          <button
-            onClick={handleUpload}
-            disabled={!file || uploading}
-            style={{ marginLeft: '10px', padding: '5px 10px' }}
-          >
-            {uploading ? 'Enviando...' : 'Enviar novo arquivo'}
-          </button>
+      {/* SEÇÃO DE ARQUIVOS MÚLTIPLOS */}
+      <div style={{ background: 'white', padding: '25px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+        <h3>📁 Documentos (Edital, Planilhas, etc)</h3>
+        
+        <div style={{ marginBottom: '20px', padding: '15px', border: '2px dashed #cbd5e1', borderRadius: '8px' }}>
+          <label style={{ cursor: 'pointer', display: 'block', textAlign: 'center' }}>
+            {uploading ? 'Enviando arquivos...' : '📎 Clique aqui para selecionar vários arquivos'}
+            <input type="file" multiple onChange={handleFileUpload} hidden disabled={uploading} />
+          </label>
         </div>
-      </div>
 
-      <div>
-        <Link href="/licitacoes">
-          <button>Voltar para lista</button>
-        </Link>
-        <Link href={`/licitacoes/editar/${licitacao.id}`}>
-          <button style={{ marginLeft: '10px' }}>Editar dados</button>
-        </Link>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {anexos.length === 0 && <p style={{ color: '#94a3b8' }}>Nenhum arquivo anexado.</p>}
+          {anexos.map(anexo => (
+            <div key={anexo.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px', background: '#f1f5f9', borderRadius: '8px' }}>
+              <a href={anexo.arquivo_url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', color: '#2563eb', fontWeight: '500' }}>
+                📄 {anexo.nome_arquivo}
+              </a>
+              <button onClick={() => excluirAnexo(anexo.id, anexo.arquivo_url)} style={{ color: 'red', border: 'none', background: 'none', cursor: 'pointer' }}>Excluir</button>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )
