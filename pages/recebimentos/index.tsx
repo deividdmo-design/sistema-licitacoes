@@ -8,7 +8,8 @@ interface Recebimento {
   valor_recebido: number
   nota_fiscal: string | null
   licitacao_id: string
-  licitacoes?: { identificacao: string }
+  // 1. Ajuste na Interface para aceitar retorno flexível do Supabase
+  licitacoes?: { identificacao: string } | { identificacao: string }[]
 }
 
 export default function ListaRecebimentos() {
@@ -26,13 +27,27 @@ export default function ListaRecebimentos() {
       .from('recebimentos')
       .select('*, licitacoes(identificacao)')
       .order('data_pagamento', { ascending: false })
-    if (error) console.error(error)
-    else {
-      setRecebimentos(data || [])
-      const total = (data || []).reduce((acc, r) => acc + (r.valor_recebido || 0), 0)
+    
+    if (error) {
+      console.error(error)
+    } else {
+      // 2. Correção de Dados: Tratando a licitação para evitar erro no build
+      const formatado = data?.map((rec: any) => ({
+        ...rec,
+        licitacoes: Array.isArray(rec.licitacoes) ? rec.licitacoes[0] : rec.licitacoes
+      }))
+      
+      setRecebimentos(formatado || [])
+      const total = (formatado || []).reduce((acc: number, r: any) => acc + (r.valor_recebido || 0), 0)
       setTotalGeral(total)
     }
     setLoading(false)
+  }
+
+  // Helper para acessar a identificação com segurança
+  const getLicitacaoIdentificacao = (rec: Recebimento) => {
+    const lic: any = rec.licitacoes
+    return Array.isArray(lic) ? lic[0]?.identificacao : lic?.identificacao
   }
 
   async function excluirRecebimento(id: string) {
@@ -49,51 +64,64 @@ export default function ListaRecebimentos() {
   }
 
   return (
-    <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>
-      <h1>Recebimentos</h1>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+    <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '30px' }}>
+      <h1 style={{ color: '#1e293b', marginBottom: '30px', fontWeight: 'bold' }}>Recebimentos</h1>
+      
+      {/* Resumo Financeiro Profissional */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', gap: '20px' }}>
         <Link href="/recebimentos/novo">
-          <button style={{ padding: '10px 20px', background: '#0070f3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
-            Novo Recebimento
+          <button style={{ padding: '12px 24px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', boxShadow: '0 2px 4px rgba(59, 130, 246, 0.3)' }}>
+            + Novo Recebimento
           </button>
         </Link>
-        <div style={{ background: '#e3f2fd', padding: '10px 20px', borderRadius: '8px' }}>
-          <strong>Total Recebido: </strong>
-          {totalGeral.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+        <div style={{ background: '#dcfce7', padding: '15px 25px', borderRadius: '12px', border: '1px solid #bbf7d0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+          <span style={{ color: '#166534', fontWeight: '600', fontSize: '14px' }}>TOTAL RECEBIDO: </span>
+          <span style={{ color: '#166534', fontWeight: 'bold', fontSize: '1.5rem', marginLeft: '10px' }}>
+            {totalGeral.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+          </span>
         </div>
       </div>
+
       {loading ? (
-        <p>Carregando...</p>
+        <p>Buscando lançamentos financeiros...</p>
       ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ background: '#f0f0f0' }}>
-              <th style={{ padding: '10px', textAlign: 'left' }}>Licitação</th>
-              <th style={{ padding: '10px', textAlign: 'left' }}>Data Pagamento</th>
-              <th style={{ padding: '10px', textAlign: 'left' }}>Valor</th>
-              <th style={{ padding: '10px', textAlign: 'left' }}>Nota Fiscal</th>
-              <th style={{ padding: '10px', textAlign: 'left' }}>Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {recebimentos.map((rec) => (
-              <tr key={rec.id} style={{ borderBottom: '1px solid #ddd' }}>
-                <td style={{ padding: '10px' }}>{rec.licitacoes?.identificacao || '—'}</td>
-                <td style={{ padding: '10px' }}>{formatarData(rec.data_pagamento)}</td>
-                <td style={{ padding: '10px' }}>
-                  {rec.valor_recebido.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                </td>
-                <td style={{ padding: '10px' }}>{rec.nota_fiscal || '—'}</td>
-                <td style={{ padding: '10px' }}>
-                  <Link href={`/recebimentos/editar/${rec.id}`}>
-                    <button style={{ marginRight: '5px', padding: '5px 10px', cursor: 'pointer' }}>Editar</button>
-                  </Link>
-                  <button onClick={() => excluirRecebimento(rec.id)} style={{ padding: '5px 10px', cursor: 'pointer' }}>Excluir</button>
-                </td>
+        <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                <th style={{ padding: '18px', textAlign: 'left', color: '#64748b', fontSize: '13px' }}>LICITAÇÃO</th>
+                <th style={{ padding: '18px', textAlign: 'left', color: '#64748b', fontSize: '13px' }}>DATA PAGAMENTO</th>
+                <th style={{ padding: '18px', textAlign: 'left', color: '#64748b', fontSize: '13px' }}>VALOR</th>
+                <th style={{ padding: '18px', textAlign: 'left', color: '#64748b', fontSize: '13px' }}>NOTA FISCAL</th>
+                <th style={{ padding: '18px', textAlign: 'right', color: '#64748b', fontSize: '13px' }}>AÇÕES</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {recebimentos.map((rec) => (
+                <tr key={rec.id} style={{ borderBottom: '1px solid #f1f5f9', transition: 'background 0.2s' }}>
+                  <td style={{ padding: '18px', fontWeight: '600', color: '#1e293b' }}>
+                    {getLicitacaoIdentificacao(rec) || '—'}
+                  </td>
+                  <td style={{ padding: '18px', color: '#64748b' }}>{formatarData(rec.data_pagamento)}</td>
+                  <td style={{ padding: '18px', fontWeight: '700', color: '#166534' }}>
+                    {rec.valor_recebido.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                  </td>
+                  <td style={{ padding: '18px' }}>
+                    <span style={{ padding: '4px 8px', background: '#f1f5f9', borderRadius: '4px', fontSize: '12px', color: '#475569', fontWeight: '500' }}>
+                      {rec.nota_fiscal || 'S/ NF'}
+                    </span>
+                  </td>
+                  <td style={{ padding: '18px', textAlign: 'right' }}>
+                    <Link href={`/recebimentos/editar/${rec.id}`}>
+                      <button style={{ marginRight: '8px', padding: '6px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', background: 'white', cursor: 'pointer' }}>Editar</button>
+                    </Link>
+                    <button onClick={() => excluirRecebimento(rec.id)} style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid #fee2e2', background: '#fef2f2', color: '#991b1b', cursor: 'pointer' }}>Excluir</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   )
