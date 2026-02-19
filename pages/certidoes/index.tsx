@@ -11,7 +11,7 @@ interface Certidao {
   tipo_id: string
   tipos_documento?: { nome: string }
   unidade_id: string
-  unidades?: { codigo: string; razao_social: string }
+  unidades?: { codigo: string; razao_social: string; cnpj: string }
   data_emissao: string
   validade_dias: number | null
   sem_validade: boolean
@@ -20,16 +20,19 @@ interface Certidao {
   responsavel_nome: string | null
 }
 
-interface TipoDocumento {
+interface Unidade {
   id: string
-  nome: string
+  codigo: string
+  razao_social: string
+  cnpj: string
 }
 
 const PAGE_SIZE = 20
 
 export default function ListaCertidoes() {
   const [certidoes, setCertidoes] = useState<Certidao[]>([])
-  const [tipos, setTipos] = useState<TipoDocumento[]>([])
+  const [unidades, setUnidades] = useState<Unidade[]>([])
+  const [filtroUnidade, setFiltroUnidade] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [hasMore, setHasMore] = useState(true)
@@ -37,9 +40,10 @@ export default function ListaCertidoes() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [baixando, setBaixando] = useState(false)
 
+  // Carregar lista de unidades para o filtro (incluindo CNPJ)
   useEffect(() => {
-    supabase.from('tipos_documento').select('*').order('nome').then(({ data }) => {
-      setTipos(data || [])
+    supabase.from('unidades').select('id, codigo, razao_social, cnpj').order('codigo').then(({ data }) => {
+      setUnidades(data || [])
     })
   }, [])
 
@@ -50,11 +54,16 @@ export default function ListaCertidoes() {
     setLoading(reset)
     setLoadingMore(!reset)
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('certidoes')
-      .select('*, unidades(codigo, razao_social), tipos_documento(nome)')
+      .select('*, unidades(codigo, razao_social, cnpj), tipos_documento(nome)')
       .order('vencimento', { ascending: true, nullsFirst: false })
-      .range(from, to)
+
+    if (filtroUnidade) {
+      query = query.eq('unidade_id', filtroUnidade)
+    }
+
+    const { data, error } = await query.range(from, to)
 
     if (error) {
       console.error(error)
@@ -75,7 +84,7 @@ export default function ListaCertidoes() {
 
   useEffect(() => {
     carregarCertidoes(true)
-  }, [])
+  }, [filtroUnidade])
 
   async function excluirCertidao(id: string) {
     if (!confirm('Tem certeza que deseja excluir este documento?')) return
@@ -167,6 +176,20 @@ export default function ListaCertidoes() {
         >
           {baixando ? 'Compactando...' : `Baixar Selecionados (${selectedIds.size})`}
         </button>
+
+        {/* Filtro por Unidade com CNPJ */}
+        <select
+          value={filtroUnidade}
+          onChange={(e) => setFiltroUnidade(e.target.value)}
+          style={{ padding: '10px', borderRadius: '5px', border: '1px solid #ccc' }}
+        >
+          <option value="">Todas as Unidades</option>
+          {unidades.map(u => (
+            <option key={u.id} value={u.id}>
+              {u.codigo} - {u.razao_social} ({u.cnpj})
+            </option>
+          ))}
+        </select>
       </div>
 
       {loading && page === 0 ? (
@@ -181,7 +204,7 @@ export default function ListaCertidoes() {
                 </th>
                 <th style={{ padding: '10px', textAlign: 'left' }}>Documento</th>
                 <th style={{ padding: '10px', textAlign: 'left' }}>Tipo</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>Origem</th>
+                <th style={{ padding: '10px', textAlign: 'left' }}>Origem (CNPJ)</th>
                 <th style={{ padding: '10px', textAlign: 'left' }}>Responsável</th>
                 <th style={{ padding: '10px', textAlign: 'left' }}>Emissão</th>
                 <th style={{ padding: '10px', textAlign: 'left' }}>Validade</th>
@@ -210,7 +233,7 @@ export default function ListaCertidoes() {
                     </td>
                     <td style={{ padding: '10px' }}>{cert.tipos_documento?.nome}</td>
                     <td style={{ padding: '10px' }}>
-                      {cert.unidades?.codigo ? `${cert.unidades.codigo} - ${cert.unidades.razao_social}` : 'Geral'}
+                      {cert.unidades?.codigo ? `${cert.unidades.codigo} - ${cert.unidades.razao_social} (${cert.unidades.cnpj})` : 'Geral'}
                     </td>
                     <td style={{ padding: '10px' }}>{cert.responsavel_nome}</td>
                     <td style={{ padding: '10px' }}>{formatarData(cert.data_emissao)}</td>
