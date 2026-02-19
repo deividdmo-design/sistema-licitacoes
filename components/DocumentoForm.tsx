@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useRouter } from 'next/router'
 
-interface CertidaoFormProps {
-  certidaoId?: string
+interface DocumentoFormProps {
+  documentoId?: string
 }
 
 interface Unidade {
@@ -13,37 +13,40 @@ interface Unidade {
   cnpj: string
 }
 
-interface TipoDocumento {
-  id: string
-  nome: string
-}
+const tipos = [
+  'Fiscal',
+  'Jurídico',
+  'Econômico',
+  'Técnico',
+  'Conselho',
+  'Atestado',
+  'Alvará',
+  'Outro'
+]
 
-export default function CertidaoForm({ certidaoId }: CertidaoFormProps) {
+export default function DocumentoForm({ documentoId }: DocumentoFormProps) {
   const router = useRouter()
   const [unidades, setUnidades] = useState<Unidade[]>([])
-  const [tipos, setTipos] = useState<TipoDocumento[]>([])
   const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [semValidade, setSemValidade] = useState(false)
   const [formData, setFormData] = useState({
-    nome_certidao: '',
-    descricao: '',
-    tipo_id: '',
-    responsavel_nome: '',
+    nome: '',
+    tipo: '',
+    unidade_id: '',
     data_emissao: '',
     validade_dias: '',
-    sem_validade: false,
-    unidade_id: '',
+    observacoes: '',
     arquivo_url: ''
   })
   const [file, setFile] = useState<File | null>(null)
 
   useEffect(() => {
     carregarUnidades()
-    carregarTipos()
-    if (certidaoId) {
-      carregarCertidao()
+    if (documentoId) {
+      carregarDocumento()
     }
-  }, [certidaoId])
+  }, [documentoId])
 
   async function carregarUnidades() {
     const { data } = await supabase
@@ -53,33 +56,24 @@ export default function CertidaoForm({ certidaoId }: CertidaoFormProps) {
     setUnidades(data || [])
   }
 
-  async function carregarTipos() {
-    const { data } = await supabase
-      .from('tipos_documento')
-      .select('id, nome')
-      .order('nome')
-    setTipos(data || [])
-  }
-
-  async function carregarCertidao() {
+  async function carregarDocumento() {
     setLoading(true)
     const { data, error } = await supabase
-      .from('certidoes')
+      .from('documentos')
       .select('*')
-      .eq('id', certidaoId)
+      .eq('id', documentoId)
       .single()
     if (error) {
       alert('Erro ao carregar documento')
     } else if (data) {
+      setSemValidade(data.sem_validade || false)
       setFormData({
-        nome_certidao: data.nome_certidao || '',
-        descricao: data.descricao || '',
-        tipo_id: data.tipo_id || '',
-        responsavel_nome: data.responsavel_nome || '',
+        nome: data.nome || '',
+        tipo: data.tipo || '',
+        unidade_id: data.unidade_id || '',
         data_emissao: data.data_emissao || '',
         validade_dias: data.validade_dias ? data.validade_dias.toString() : '',
-        sem_validade: data.sem_validade || false,
-        unidade_id: data.unidade_id || '',
+        observacoes: data.observacoes || '',
         arquivo_url: data.arquivo_url || ''
       })
     }
@@ -91,32 +85,24 @@ export default function CertidaoForm({ certidaoId }: CertidaoFormProps) {
     setFormData({ ...formData, [name]: value })
   }
 
-  const handleCheckbox = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, checked } = e.target
-    setFormData({ ...formData, [name]: checked })
-    if (name === 'sem_validade' && checked) {
-      setFormData(prev => ({ ...prev, validade_dias: '' }))
-    }
-  }
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setFile(e.target.files[0])
     }
   }
 
-  async function uploadFile(file: File, certidaoId: string) {
+  async function uploadFile(file: File, documentoId: string) {
     const fileExt = file.name.split('.').pop()
-    const fileName = `${certidaoId}.${fileExt}`
+    const fileName = `${documentoId}.${fileExt}`
     const filePath = fileName
 
     const { error } = await supabase.storage
-      .from('certidoes')
+      .from('documentos')
       .upload(filePath, file, { upsert: true })
 
     if (error) throw error
 
-    const { data } = supabase.storage.from('certidoes').getPublicUrl(filePath)
+    const { data } = supabase.storage.from('documentos').getPublicUrl(filePath)
     return data.publicUrl
   }
 
@@ -127,47 +113,50 @@ export default function CertidaoForm({ certidaoId }: CertidaoFormProps) {
     try {
       let arquivo_url = formData.arquivo_url
 
-      // Se for edição e tiver novo arquivo, faz upload
-      if (certidaoId && file) {
-        setUploading(true)
-        arquivo_url = await uploadFile(file, certidaoId)
-        setUploading(false)
-      }
-
       const dadosParaSalvar = {
-        nome_certidao: formData.nome_certidao,
-        descricao: formData.descricao || null,
-        tipo_id: formData.tipo_id || null,
-        responsavel_nome: formData.responsavel_nome || null,
-        data_emissao: formData.data_emissao || null,
-        validade_dias: formData.sem_validade ? null : (formData.validade_dias ? parseInt(formData.validade_dias) : null),
-        sem_validade: formData.sem_validade,
+        nome: formData.nome,
+        tipo: formData.tipo,
         unidade_id: formData.unidade_id || null,
+        data_emissao: semValidade ? null : formData.data_emissao || null,
+        validade_dias: semValidade ? null : (formData.validade_dias ? parseInt(formData.validade_dias) : null),
+        sem_validade: semValidade,
+        observacoes: formData.observacoes || null,
         arquivo_url: arquivo_url || null
       }
 
-      if (certidaoId) {
+      if (documentoId) {
         // Atualização
         const { error } = await supabase
-          .from('certidoes')
+          .from('documentos')
           .update(dadosParaSalvar)
-          .eq('id', certidaoId)
+          .eq('id', documentoId)
         if (error) throw error
+
+        // Se tiver novo arquivo, faz upload e atualiza
+        if (file) {
+          setUploading(true)
+          const publicUrl = await uploadFile(file, documentoId)
+          const { error: updateError } = await supabase
+            .from('documentos')
+            .update({ arquivo_url: publicUrl })
+            .eq('id', documentoId)
+          if (updateError) throw updateError
+          setUploading(false)
+        }
       } else {
         // Inserção
         const { data: inserted, error } = await supabase
-          .from('certidoes')
+          .from('documentos')
           .insert([dadosParaSalvar])
           .select('id')
           .single()
         if (error) throw error
 
-        // Se tiver arquivo, faz upload com o novo ID e atualiza
         if (file) {
           setUploading(true)
           const publicUrl = await uploadFile(file, inserted.id)
           const { error: updateError } = await supabase
-            .from('certidoes')
+            .from('documentos')
             .update({ arquivo_url: publicUrl })
             .eq('id', inserted.id)
           if (updateError) throw updateError
@@ -175,7 +164,7 @@ export default function CertidaoForm({ certidaoId }: CertidaoFormProps) {
         }
       }
 
-      router.push('/certidoes')
+      router.push('/documentos')
     } catch (error: any) {
       alert('Erro ao salvar: ' + error.message)
     } finally {
@@ -183,16 +172,18 @@ export default function CertidaoForm({ certidaoId }: CertidaoFormProps) {
     }
   }
 
+  if (loading && documentoId) return <p>Carregando...</p>
+
   return (
     <form onSubmit={handleSubmit} style={{ maxWidth: '600px', margin: '0 auto' }}>
-      <h1>{certidaoId ? 'Editar Documento' : 'Novo Documento'}</h1>
+      <h1>{documentoId ? 'Editar Documento' : 'Novo Documento'}</h1>
 
       <div style={{ marginBottom: '15px' }}>
         <label style={{ display: 'block', marginBottom: '5px' }}>Nome do Documento *</label>
         <input
           type="text"
-          name="nome_certidao"
-          value={formData.nome_certidao}
+          name="nome"
+          value={formData.nome}
           onChange={handleChange}
           required
           style={{ width: '100%', padding: '8px' }}
@@ -200,33 +191,23 @@ export default function CertidaoForm({ certidaoId }: CertidaoFormProps) {
       </div>
 
       <div style={{ marginBottom: '15px' }}>
-        <label style={{ display: 'block', marginBottom: '5px' }}>Descrição (opcional)</label>
-        <textarea
-          name="descricao"
-          value={formData.descricao}
-          onChange={handleChange}
-          rows={2}
-          style={{ width: '100%', padding: '8px' }}
-        />
-      </div>
-
-      <div style={{ marginBottom: '15px' }}>
-        <label style={{ display: 'block', marginBottom: '5px' }}>Tipo de Documento</label>
+        <label style={{ display: 'block', marginBottom: '5px' }}>Tipo *</label>
         <select
-          name="tipo_id"
-          value={formData.tipo_id}
+          name="tipo"
+          value={formData.tipo}
           onChange={handleChange}
+          required
           style={{ width: '100%', padding: '8px' }}
         >
           <option value="">Selecione</option>
-          {tipos.map(tipo => (
-            <option key={tipo.id} value={tipo.id}>{tipo.nome}</option>
+          {tipos.map(t => (
+            <option key={t} value={t}>{t}</option>
           ))}
         </select>
       </div>
 
       <div style={{ marginBottom: '15px' }}>
-        <label style={{ display: 'block', marginBottom: '5px' }}>Unidade (Matriz/Filial)</label>
+        <label style={{ display: 'block', marginBottom: '5px' }}>Origem (Unidade)</label>
         <select
           name="unidade_id"
           value={formData.unidade_id}
@@ -234,62 +215,63 @@ export default function CertidaoForm({ certidaoId }: CertidaoFormProps) {
           style={{ width: '100%', padding: '8px' }}
         >
           <option value="">Geral</option>
-          {unidades.map(unidade => (
-            <option key={unidade.id} value={unidade.id}>
-              {unidade.codigo} - {unidade.razao_social}
+          {unidades.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.codigo} - {u.razao_social}
             </option>
           ))}
         </select>
       </div>
 
       <div style={{ marginBottom: '15px' }}>
-        <label style={{ display: 'block', marginBottom: '5px' }}>Responsável</label>
-        <input
-          type="text"
-          name="responsavel_nome"
-          value={formData.responsavel_nome}
-          onChange={handleChange}
-          style={{ width: '100%', padding: '8px' }}
-        />
-      </div>
-
-      <div style={{ marginBottom: '15px' }}>
-        <label style={{ display: 'block', marginBottom: '5px' }}>Data de Emissão</label>
-        <input
-          type="date"
-          name="data_emissao"
-          value={formData.data_emissao}
-          onChange={handleChange}
-          style={{ width: '100%', padding: '8px' }}
-        />
-      </div>
-
-      <div style={{ marginBottom: '15px' }}>
         <label style={{ display: 'block', marginBottom: '5px' }}>
           <input
             type="checkbox"
-            name="sem_validade"
-            checked={formData.sem_validade}
-            onChange={handleCheckbox}
+            checked={semValidade}
+            onChange={(e) => setSemValidade(e.target.checked)}
           />
-          {' '}Documento sem validade (não vence)
+          {' '}Documento sem validade
         </label>
       </div>
 
-      {!formData.sem_validade && (
-        <div style={{ marginBottom: '15px' }}>
-          <label style={{ display: 'block', marginBottom: '5px' }}>Validade (dias)</label>
-          <input
-            type="number"
-            name="validade_dias"
-            value={formData.validade_dias}
-            onChange={handleChange}
-            min="1"
-            style={{ width: '100%', padding: '8px' }}
-          />
-          <small>O vencimento será calculado automaticamente.</small>
-        </div>
+      {!semValidade && (
+        <>
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '5px' }}>Data de Emissão</label>
+            <input
+              type="date"
+              name="data_emissao"
+              value={formData.data_emissao}
+              onChange={handleChange}
+              style={{ width: '100%', padding: '8px' }}
+            />
+          </div>
+
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '5px' }}>Validade (dias)</label>
+            <input
+              type="number"
+              name="validade_dias"
+              value={formData.validade_dias}
+              onChange={handleChange}
+              min="1"
+              style={{ width: '100%', padding: '8px' }}
+            />
+            <small>O vencimento será calculado automaticamente.</small>
+          </div>
+        </>
       )}
+
+      <div style={{ marginBottom: '15px' }}>
+        <label style={{ display: 'block', marginBottom: '5px' }}>Observações</label>
+        <textarea
+          name="observacoes"
+          value={formData.observacoes}
+          onChange={handleChange}
+          rows={3}
+          style={{ width: '100%', padding: '8px' }}
+        />
+      </div>
 
       <div style={{ marginBottom: '15px' }}>
         <label style={{ display: 'block', marginBottom: '5px' }}>Arquivo (PDF)</label>

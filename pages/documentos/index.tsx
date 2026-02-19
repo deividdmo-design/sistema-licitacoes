@@ -4,46 +4,31 @@ import Link from 'next/link'
 import JSZip from 'jszip'
 import { saveAs } from 'file-saver'
 
-interface Certidao {
+interface Documento {
   id: string
-  nome_certidao: string
-  descricao: string | null
-  tipo_id: string
-  tipos_documento?: { nome: string }
+  nome: string
+  tipo: string
   unidade_id: string
   unidades?: { codigo: string; razao_social: string }
-  data_emissao: string
+  data_emissao: string | null
   validade_dias: number | null
   sem_validade: boolean
   vencimento: string | null
   arquivo_url: string | null
-  responsavel_nome: string | null
-}
-
-interface TipoDocumento {
-  id: string
-  nome: string
+  observacoes: string | null
 }
 
 const PAGE_SIZE = 20
 
-export default function ListaCertidoes() {
-  const [certidoes, setCertidoes] = useState<Certidao[]>([])
-  const [tipos, setTipos] = useState<TipoDocumento[]>([])
+export default function ListaDocumentos() {
+  const [documentos, setDocumentos] = useState<Documento[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [hasMore, setHasMore] = useState(true)
   const [page, setPage] = useState(0)
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [baixando, setBaixando] = useState(false)
+  const [selecionados, setSelecionados] = useState<string[]>([])
 
-  useEffect(() => {
-    supabase.from('tipos_documento').select('*').order('nome').then(({ data }) => {
-      setTipos(data || [])
-    })
-  }, [])
-
-  const carregarCertidoes = async (reset = false) => {
+  const carregarDocumentos = async (reset = false) => {
     const from = reset ? 0 : page * PAGE_SIZE
     const to = from + PAGE_SIZE - 1
 
@@ -51,8 +36,8 @@ export default function ListaCertidoes() {
     setLoadingMore(!reset)
 
     const { data, error } = await supabase
-      .from('certidoes')
-      .select('*, unidades(codigo, razao_social), tipos_documento(nome)')
+      .from('documentos')
+      .select('*, unidades(codigo, razao_social)')
       .order('vencimento', { ascending: true, nullsFirst: false })
       .range(from, to)
 
@@ -60,10 +45,10 @@ export default function ListaCertidoes() {
       console.error(error)
     } else {
       if (reset) {
-        setCertidoes(data || [])
+        setDocumentos(data || [])
         setPage(1)
       } else {
-        setCertidoes(prev => [...prev, ...(data || [])])
+        setDocumentos(prev => [...prev, ...(data || [])])
         setPage(prev => prev + 1)
       }
       setHasMore(data && data.length === PAGE_SIZE)
@@ -74,14 +59,14 @@ export default function ListaCertidoes() {
   }
 
   useEffect(() => {
-    carregarCertidoes(true)
+    carregarDocumentos(true)
   }, [])
 
-  async function excluirCertidao(id: string) {
+  async function excluirDocumento(id: string) {
     if (!confirm('Tem certeza que deseja excluir este documento?')) return
-    const { error } = await supabase.from('certidoes').delete().eq('id', id)
+    const { error } = await supabase.from('documentos').delete().eq('id', id)
     if (error) alert('Erro ao excluir: ' + error.message)
-    else carregarCertidoes(true)
+    else carregarDocumentos(true)
   }
 
   function formatarData(dataISO: string | null) {
@@ -99,73 +84,72 @@ export default function ListaCertidoes() {
     return Math.ceil(diff / (1000 * 60 * 60 * 24))
   }
 
-  function getStatusClass(dias: number | null, semValidade: boolean) {
-    if (semValidade) return { color: 'gray', text: 'Sem validade', bg: '#f0f0f0' }
-    if (dias === null) return { color: 'gray', text: 'Indeterminado', bg: '#f0f0f0' }
-    if (dias < 0) return { color: 'red', text: 'Vencido', bg: '#ffeeee' }
-    if (dias <= 15) return { color: 'orange', text: `Vence em ${dias} dias`, bg: '#fff3cd' }
-    return { color: 'green', text: 'Vigente', bg: '#d4edda' }
+  function getStatus(vencimentoISO: string | null, semValidade: boolean) {
+    if (semValidade) return { text: 'Indeterminado', color: '#6c757d', bg: '#e9ecef' }
+    if (!vencimentoISO) return { text: 'Sem vencimento', color: '#6c757d', bg: '#e9ecef' }
+    const dias = calcularDiasRestantes(vencimentoISO)
+    if (dias === null) return { text: 'Erro', color: '#000', bg: '#fff' }
+    if (dias < 0) return { text: 'Vencido', color: 'red', bg: '#ffeeee' }
+    if (dias <= 15) return { text: `Vence em ${dias} dias`, color: 'orange', bg: '#fff3cd' }
+    return { text: 'Vigente', color: 'green', bg: '#d4edda' }
   }
 
-  const toggleSelecionar = (id: string) => {
-    const newSet = new Set(selectedIds)
-    if (newSet.has(id)) newSet.delete(id)
-    else newSet.add(id)
-    setSelectedIds(newSet)
+  const toggleSelecionado = (id: string) => {
+    setSelecionados(prev =>
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    )
   }
 
   const selecionarTodos = () => {
-    if (selectedIds.size === certidoes.length) {
-      setSelectedIds(new Set())
+    if (selecionados.length === documentos.length) {
+      setSelecionados([])
     } else {
-      setSelectedIds(new Set(certidoes.map(c => c.id)))
+      setSelecionados(documentos.map(d => d.id))
     }
   }
 
   const baixarSelecionados = async () => {
-    if (selectedIds.size === 0) {
-      alert('Selecione pelo menos um documento.')
+    const docsParaBaixar = documentos.filter(d => selecionados.includes(d.id) && d.arquivo_url)
+    if (docsParaBaixar.length === 0) {
+      alert('Nenhum documento com arquivo selecionado.')
       return
     }
 
-    setBaixando(true)
     const zip = new JSZip()
-    const documentos = certidoes.filter(c => selectedIds.has(c.id) && c.arquivo_url)
-
-    for (const doc of documentos) {
+    for (const doc of docsParaBaixar) {
       if (doc.arquivo_url) {
         try {
           const response = await fetch(doc.arquivo_url)
           const blob = await response.blob()
-          const nomeArquivo = doc.arquivo_url.split('/').pop() || `${doc.nome_certidao}.pdf`
+          // Extrair nome do arquivo da URL ou usar o nome do documento
+          const nomeArquivo = doc.arquivo_url.split('/').pop() || `${doc.nome}.pdf`
           zip.file(nomeArquivo, blob)
-        } catch (err) {
-          console.error('Erro ao baixar', doc.arquivo_url, err)
+        } catch (error) {
+          console.error('Erro ao baixar arquivo', error)
         }
       }
     }
 
     const content = await zip.generateAsync({ type: 'blob' })
     saveAs(content, 'documentos_selecionados.zip')
-    setBaixando(false)
   }
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>
       <h1>Documentos de Habilitação</h1>
 
-      <div style={{ marginBottom: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-        <Link href="/certidoes/novo">
+      <div style={{ marginBottom: '20px', display: 'flex', gap: '10px' }}>
+        <Link href="/documentos/novo">
           <button style={{ padding: '10px 20px', background: '#0070f3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
             Novo Documento
           </button>
         </Link>
         <button
           onClick={baixarSelecionados}
-          disabled={baixando || selectedIds.size === 0}
-          style={{ padding: '10px 20px', background: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
+          disabled={selecionados.length === 0}
+          style={{ padding: '10px 20px', background: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: selecionados.length === 0 ? 'not-allowed' : 'pointer' }}
         >
-          {baixando ? 'Compactando...' : `Baixar Selecionados (${selectedIds.size})`}
+          Baixar selecionados ({selecionados.length})
         </button>
       </div>
 
@@ -177,12 +161,11 @@ export default function ListaCertidoes() {
             <thead>
               <tr style={{ background: '#f0f0f0' }}>
                 <th style={{ padding: '10px', textAlign: 'left' }}>
-                  <input type="checkbox" onChange={selecionarTodos} checked={selectedIds.size === certidoes.length && certidoes.length > 0} />
+                  <input type="checkbox" checked={selecionados.length === documentos.length && documentos.length > 0} onChange={selecionarTodos} />
                 </th>
                 <th style={{ padding: '10px', textAlign: 'left' }}>Documento</th>
                 <th style={{ padding: '10px', textAlign: 'left' }}>Tipo</th>
                 <th style={{ padding: '10px', textAlign: 'left' }}>Origem</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>Responsável</th>
                 <th style={{ padding: '10px', textAlign: 'left' }}>Emissão</th>
                 <th style={{ padding: '10px', textAlign: 'left' }}>Validade</th>
                 <th style={{ padding: '10px', textAlign: 'left' }}>Dias</th>
@@ -192,43 +175,45 @@ export default function ListaCertidoes() {
               </tr>
             </thead>
             <tbody>
-              {certidoes.map((cert) => {
-                const dias = cert.sem_validade ? null : calcularDiasRestantes(cert.vencimento)
-                const status = getStatusClass(dias, cert.sem_validade)
+              {documentos.map((doc) => {
+                const status = getStatus(doc.vencimento, doc.sem_validade)
+                const dias = doc.vencimento ? calcularDiasRestantes(doc.vencimento) : null
                 return (
-                  <tr key={cert.id} style={{ borderBottom: '1px solid #ddd', background: status.bg }}>
+                  <tr key={doc.id} style={{ borderBottom: '1px solid #ddd', background: status.bg }}>
                     <td style={{ padding: '10px' }}>
                       <input
                         type="checkbox"
-                        checked={selectedIds.has(cert.id)}
-                        onChange={() => toggleSelecionar(cert.id)}
+                        checked={selecionados.includes(doc.id)}
+                        onChange={() => toggleSelecionado(doc.id)}
                       />
                     </td>
+                    <td style={{ padding: '10px' }}>{doc.nome}</td>
+                    <td style={{ padding: '10px' }}>{doc.tipo}</td>
                     <td style={{ padding: '10px' }}>
-                      <strong>{cert.nome_certidao}</strong>
-                      {cert.descricao && <div style={{ fontSize: '0.9em', color: '#666' }}>{cert.descricao}</div>}
+                      {doc.unidades?.codigo ? `${doc.unidades.codigo} - ${doc.unidades.razao_social}` : 'Geral'}
                     </td>
-                    <td style={{ padding: '10px' }}>{cert.tipos_documento?.nome}</td>
+                    <td style={{ padding: '10px' }}>{formatarData(doc.data_emissao)}</td>
                     <td style={{ padding: '10px' }}>
-                      {cert.unidades?.codigo ? `${cert.unidades.codigo} - ${cert.unidades.razao_social}` : 'Geral'}
+                      {doc.sem_validade ? 'Não se aplica' : formatarData(doc.vencimento)}
                     </td>
-                    <td style={{ padding: '10px' }}>{cert.responsavel_nome}</td>
-                    <td style={{ padding: '10px' }}>{formatarData(cert.data_emissao)}</td>
                     <td style={{ padding: '10px' }}>
-                      {cert.sem_validade ? 'Sem validade' : formatarData(cert.vencimento)}
+                      {dias !== null ? (dias < 0 ? 0 : dias) : '-'}
                     </td>
-                    <td style={{ padding: '10px' }}>{dias !== null ? dias : '-'}</td>
-                    <td style={{ padding: '10px', fontWeight: 'bold', color: status.color }}>{status.text}</td>
+                    <td style={{ padding: '10px', fontWeight: 'bold', color: status.color }}>
+                      {status.text}
+                    </td>
                     <td style={{ padding: '10px' }}>
-                      {cert.arquivo_url ? (
-                        <a href={cert.arquivo_url} target="_blank" rel="noopener noreferrer">📄 Ver</a>
+                      {doc.arquivo_url ? (
+                        <a href={doc.arquivo_url} target="_blank" rel="noopener noreferrer">
+                          📄 Ver
+                        </a>
                       ) : '-'}
                     </td>
                     <td style={{ padding: '10px' }}>
-                      <Link href={`/certidoes/editar/${cert.id}`}>
+                      <Link href={`/documentos/editar/${doc.id}`}>
                         <button style={{ marginRight: '5px' }}>Editar</button>
                       </Link>
-                      <button onClick={() => excluirCertidao(cert.id)}>Excluir</button>
+                      <button onClick={() => excluirDocumento(doc.id)}>Excluir</button>
                     </td>
                   </tr>
                 )
@@ -239,7 +224,7 @@ export default function ListaCertidoes() {
           {hasMore && (
             <div style={{ textAlign: 'center', marginTop: '20px' }}>
               <button
-                onClick={() => carregarCertidoes()}
+                onClick={() => carregarDocumentos()}
                 disabled={loadingMore}
                 style={{ padding: '10px 20px', cursor: 'pointer' }}
               >
