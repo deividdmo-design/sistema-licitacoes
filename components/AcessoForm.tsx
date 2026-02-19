@@ -34,7 +34,6 @@ export default function AcessoForm({ acessoId }: AcessoFormProps) {
     if (error) {
       alert('Erro ao carregar acesso')
     } else if (data) {
-      // Descriptografar a senha para exibição
       const bytes = CryptoJS.AES.decrypt(data.senha_criptografada, process.env.NEXT_PUBLIC_CRYPTO_SECRET!)
       const senha = bytes.toString(CryptoJS.enc.Utf8)
       setFormData({
@@ -57,7 +56,6 @@ export default function AcessoForm({ acessoId }: AcessoFormProps) {
     e.preventDefault()
     setLoading(true)
 
-    // Criptografar a senha antes de enviar
     const senhaCriptografada = CryptoJS.AES.encrypt(formData.senha, process.env.NEXT_PUBLIC_CRYPTO_SECRET!).toString()
 
     const dadosParaSalvar = {
@@ -97,61 +95,28 @@ export default function AcessoForm({ acessoId }: AcessoFormProps) {
       <h1>{acessoId ? 'Editar Acesso' : 'Novo Acesso'}</h1>
 
       <div style={{ marginBottom: '15px' }}>
-        <label style={{ display: 'block', marginBottom: '5px' }}>Sistema *</label>
-        <input
-          type="text"
-          name="sistema"
-          value={formData.sistema}
-          onChange={handleChange}
-          required
-          style={{ width: '100%', padding: '8px' }}
-        />
+        <label>Sistema *</label>
+        <input type="text" name="sistema" value={formData.sistema} onChange={handleChange} required style={{ width: '100%', padding: '8px' }} />
       </div>
 
       <div style={{ marginBottom: '15px' }}>
-        <label style={{ display: 'block', marginBottom: '5px' }}>Login *</label>
-        <input
-          type="text"
-          name="login"
-          value={formData.login}
-          onChange={handleChange}
-          required
-          style={{ width: '100%', padding: '8px' }}
-        />
+        <label>Login *</label>
+        <input type="text" name="login" value={formData.login} onChange={handleChange} required style={{ width: '100%', padding: '8px' }} />
       </div>
 
       <div style={{ marginBottom: '15px' }}>
-        <label style={{ display: 'block', marginBottom: '5px' }}>Senha *</label>
-        <input
-          type="password"
-          name="senha"
-          value={formData.senha}
-          onChange={handleChange}
-          required
-          style={{ width: '100%', padding: '8px' }}
-        />
+        <label>Senha *</label>
+        <input type="password" name="senha" value={formData.senha} onChange={handleChange} required style={{ width: '100%', padding: '8px' }} />
       </div>
 
       <div style={{ marginBottom: '15px' }}>
-        <label style={{ display: 'block', marginBottom: '5px' }}>URL</label>
-        <input
-          type="url"
-          name="url"
-          value={formData.url}
-          onChange={handleChange}
-          style={{ width: '100%', padding: '8px' }}
-        />
+        <label>URL</label>
+        <input type="url" name="url" value={formData.url} onChange={handleChange} style={{ width: '100%', padding: '8px' }} />
       </div>
 
       <div style={{ marginBottom: '15px' }}>
-        <label style={{ display: 'block', marginBottom: '5px' }}>Observações</label>
-        <textarea
-          name="observacoes"
-          value={formData.observacoes}
-          onChange={handleChange}
-          rows={3}
-          style={{ width: '100%', padding: '8px' }}
-        />
+        <label>Observações</label>
+        <textarea name="observacoes" value={formData.observacoes} onChange={handleChange} rows={3} style={{ width: '100%', padding: '8px' }} />
       </div>
 
       <button type="submit" disabled={loading} style={{ padding: '10px 20px' }}>
