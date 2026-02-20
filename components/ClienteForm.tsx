@@ -139,6 +139,7 @@ export default function ClienteForm({ clienteId }: ClienteFormProps) {
           type="text"
           value={formData.cnpj}
           onChange={handleCNPJChange}
+          placeholder="00.000.000/0000-00"
           style={{ width: '100%', padding: '8px' }}
         />
         <small>Digite apenas números</small>
@@ -150,6 +151,7 @@ export default function ClienteForm({ clienteId }: ClienteFormProps) {
           type="text"
           value={formData.telefone}
           onChange={handleTelefoneChange}
+          placeholder="(00) 00000-0000"
           style={{ width: '100%', padding: '8px' }}
         />
       </div>
