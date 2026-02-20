@@ -30,17 +30,19 @@ export default function DetalheLicitacao() {
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
 
-  useEffect(() => {
-    if (id) carregarDados()
-  }, [id])
+ useEffect(() => {
+  if (typeof id === 'string') {
+    carregarDados(id)
+  }
+}, [id])
 
-  async function carregarDados() {
+  async function carregarDados(licitacaoId: string) {
     setLoading(true)
     try {
       const { data: lic } = await supabase
         .from('licitacoes')
         .select('*, orgaos(razao_social)')
-        .eq('id', id)
+        .eq('id', licitacaoId)
         .single()
 
       if (lic) {
