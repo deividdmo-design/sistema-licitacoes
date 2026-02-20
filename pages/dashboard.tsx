@@ -1,232 +1,305 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import Link from 'next/link'
-import { useAuth } from '../contexts/AuthContext'
-import {
-  PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
-  XAxis, YAxis, CartesianGrid,
-  LineChart, Line, Legend
-} from 'recharts'
 
-// Interfaces Refinadas
+interface DocumentoCritico {
+  id: string
+  nome: string
+  vencimento: string
+  unidades?: any 
+}
+
 interface Licitacao {
   id: string
   identificacao: string
+  data_limite_participacao: string
+  valor_estimado: number
   status: string
-  valor_final?: number
-  created_at?: string
-  data_limite_participacao?: string
+  modalidade: string
 }
 
-interface Certidao {
-  id: string
-  nome_certidao: string
-  vencimento: string
+interface KPIs {
+  totalLicitacoes: number
+  valorEmDisputa: number
+  totalOrgaos: number
+  docsAtivos: number
+  totalContratos: number
+  statusCount: Record<string, number>
+  modalidadeCount: Record<string, number>
 }
 
 export default function Dashboard() {
-  const { user, signOut } = useAuth()
-  const [isAdmin, setIsAdmin] = useState(false)
+  const [documentos, setDocumentos] = useState<DocumentoCritico[]>([])
+  const [licitacoesProximas, setLicitacoesProximas] = useState<Licitacao[]>([])
+  const [kpis, setKpis] = useState<KPIs>({ 
+    totalLicitacoes: 0, valorEmDisputa: 0, totalOrgaos: 0, docsAtivos: 0, totalContratos: 0, statusCount: {}, modalidadeCount: {} 
+  })
   const [loading, setLoading] = useState(true)
 
-  // Estados com tipos garantidos
-  const [metrics, setMetrics] = useState({
-    total: 0, ganhas: 0, perdidas: 0, analisadas: 0, declinadas: 0,
-    valorGanho: 0, certidoesVencer: 0, contratos: 0, valorContratos: 0
-  })
-
-  const [dadosStatus, setDadosStatus] = useState<any[]>([])
-  const [dadosEvolucao, setDadosEvolucao] = useState<any[]>([])
-  const [proximasCertidoes, setProximasCertidoes] = useState<Certidao[]>([])
-  const [proximasLicitacoes, setProximasLicitacoes] = useState<Licitacao[]>([])
-
-  const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#64748b']
-
   useEffect(() => {
-    async function carregarDados() {
-      setLoading(true)
-      try {
-        // 1. Verificação de Admin
-        if (user) {
-          const { data } = await supabase.from('perfis').select('nivel_acesso').eq('id', user.id).maybeSingle()
-          if (data?.nivel_acesso === 'admin') setIsAdmin(true)
-        }
+    carregarDadosDashboard()
+  }, [])
 
-        // 2. Busca de Licitações com Tratamento de Erros
-        const { data: licitacoes } = await supabase.from('licitacoes').select('*')
-        const listaLicitacoes: Licitacao[] = licitacoes || []
+  async function carregarDadosDashboard() {
+    setLoading(true)
+    const hoje = new Date()
+    hoje.setHours(0, 0, 0, 0)
+    const daqui15Dias = new Date()
+    daqui15Dias.setDate(hoje.getDate() + 15)
 
-        const ganhas = listaLicitacoes.filter(l => l.status === 'Ganha')
-        const statusAnalise = ['Edital em Análise', 'Em precificação', 'Aguardando Cadastramento da Proposta', 'Aguardando Sessão']
-        
-        // 3. Cálculos Seguros (Evitando NaN no Deploy)
-        const valorGanho = ganhas.reduce((acc, l) => acc + (Number(l.valor_final) || 0), 0)
+    try {
+      // 1. Busca Licitações para processar as Métricas (Funil e Modalidades)
+      const { data: allLics } = await supabase.from('licitacoes').select('id, valor_estimado, status, modalidade')
+      
+      let valorTotal = 0
+      const contagemStatus: Record<string, number> = {}
+      const contagemModalidade: Record<string, number> = {}
+      
+      if (allLics) {
+        allLics.forEach(lic => {
+          valorTotal += Number(lic.valor_estimado) || 0
+          
+          const status = lic.status || 'Não Informado'
+          contagemStatus[status] = (contagemStatus[status] || 0) + 1
 
-        // Gráfico de Status
-        const statusMap = new Map<string, number>()
-        listaLicitacoes.forEach(l => {
-          const st = l.status || 'Não informado'
-          statusMap.set(st, (statusMap.get(st) || 0) + 1)
+          const mod = lic.modalidade || 'Outros'
+          contagemModalidade[mod] = (contagemModalidade[mod] || 0) + 1
         })
-
-        // Evolução Mensal Segura
-        const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
-        const evolucao = meses.map((nome, idx) => {
-          const criadas = listaLicitacoes.filter(l => l.created_at && new Date(l.created_at).getMonth() === idx).length
-          const ganhasMes = listaLicitacoes.filter(l => l.status === 'Ganha' && l.created_at && new Date(l.created_at).getMonth() === idx).length
-          return { nome, criadas, ganhas: ganhasMes }
-        })
-
-        // 4. Prazos e Alertas
-        const hoje = new Date(); hoje.setHours(0,0,0,0)
-        const limite15 = new Date(); limite15.setDate(hoje.getDate() + 15)
-        
-        const { data: certs } = await supabase.from('certidoes').select('*')
-          .gte('vencimento', hoje.toISOString().split('T')[0])
-          .lte('vencimento', limite15.toISOString().split('T')[0])
-          .order('vencimento', { ascending: true }).limit(5)
-
-        const { data: contratos } = await supabase.from('contratos').select('valor_total')
-        const vContratos = contratos?.reduce((acc, c) => acc + (Number(c.valor_total) || 0), 0) || 0
-
-        setMetrics({
-          total: listaLicitacoes.length,
-          ganhas: ganhas.length,
-          perdidas: listaLicitacoes.filter(l => l.status === 'Perdida').length,
-          analisadas: listaLicitacoes.filter(l => statusAnalise.includes(l.status)).length,
-          declinadas: listaLicitacoes.filter(l => l.status === 'Declinada').length,
-          valorGanho,
-          certidoesVencer: certs?.length || 0,
-          contratos: contratos?.length || 0,
-          valorContratos: vContratos
-        })
-
-        setDadosStatus(Array.from(statusMap.entries()).map(([name, value]) => ({ name, value })))
-        setDadosEvolucao(evolucao)
-        setProximasCertidoes(certs || [])
-        
-      } catch (err) {
-        console.error("Erro no Dashboard:", err)
-      } finally {
-        setLoading(false)
       }
+
+      // 2. Contagens Gerais
+      const { count: countOrg } = await supabase.from('orgaos').select('*', { count: 'exact', head: true })
+      const { count: countDoc } = await supabase.from('documentos').select('*', { count: 'exact', head: true })
+      const { count: countContratos } = await supabase.from('contratos').select('*', { count: 'exact', head: true })
+
+      setKpis({
+        totalLicitacoes: allLics?.length || 0,
+        valorEmDisputa: valorTotal,
+        totalOrgaos: countOrg || 0,
+        docsAtivos: countDoc || 0,
+        totalContratos: countContratos || 0,
+        statusCount: contagemStatus,
+        modalidadeCount: contagemModalidade
+      })
+
+      // 3. Documentos Críticos (Próximos 15 dias)
+      const { data: docs } = await supabase
+        .from('documentos')
+        .select('id, nome, vencimento, unidades(codigo)')
+        .not('vencimento', 'is', null)
+        .lte('vencimento', daqui15Dias.toISOString().split('T')[0])
+        .order('vencimento', { ascending: true })
+        .limit(5)
+
+      if (docs) setDocumentos(docs as any)
+
+      // 4. Licitações Próximas (Próximos 15 dias)
+      const { data: lics } = await supabase
+        .from('licitacoes')
+        .select('id, identificacao, data_limite_participacao, valor_estimado, status') 
+        .gte('data_limite_participacao', hoje.toISOString().split('T')[0])
+        .lte('data_limite_participacao', daqui15Dias.toISOString().split('T')[0])
+        .order('data_limite_participacao', { ascending: true })
+        .limit(5)
+
+      if (lics) setLicitacoesProximas(lics as any)
+
+    } catch (error) {
+      console.error('Erro ao carregar dashboard:', error)
+    } finally {
+      setLoading(false)
     }
-    carregarDados()
-  }, [user])
+  }
 
-  if (loading) return <div style={centerStyle}>Sincronizando dados da Nordeste...</div>
+  function formatarData(dataISO: string) {
+    if (!dataISO) return ''
+    const [ano, mes, dia] = dataISO.split('-')
+    return `${dia}/${mes}/${ano}`
+  }
 
-  const taxaConversao = metrics.total > 0 ? ((metrics.ganhas / (metrics.ganhas + metrics.perdidas || 1)) * 100).toFixed(1) : '0'
+  function formatarMoeda(valor: number) {
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(valor)
+  }
+
+  if (loading) return (
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '60vh', flexDirection: 'column', gap: '15px' }}>
+      <div style={{ width: '50px', height: '50px', border: '5px solid #e2e8f0', borderTopColor: '#3b82f6', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+      <p style={{ color: '#64748b', fontSize: '1.2rem', fontWeight: 'bold' }}>Sincronizando Inteligência de Negócio...</p>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  )
+
+  const alertasGerais = licitacoesProximas.length + documentos.length
+
+  // Ordena os status e modalidades do maior para o menor para os gráficos
+  const statusOrdenados = Object.entries(kpis.statusCount).sort((a, b) => b[1] - a[1])
+  const modalidadesOrdenadas = Object.entries(kpis.modalidadeCount).sort((a, b) => b[1] - a[1])
 
   return (
-    <div style={{ padding: '30px', maxWidth: '1600px', margin: '0 auto', backgroundColor: '#f8fafc', minHeight: '100vh' }}>
-      {/* Header Profissional */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
+    <div style={{ maxWidth: '1400px', margin: '0 auto', fontFamily: '"Inter", sans-serif', paddingBottom: '40px' }}>
+      
+      {/* HEADER TÁTICO */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', background: '#fff', padding: '20px 30px', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
         <div>
-          <h1 style={{ margin: 0, color: '#1e293b', fontSize: '24px' }}>Painel de Controle</h1>
-          <p style={{ margin: 0, color: '#64748b' }}>Bem-vindo, {user?.email}</p>
+          <h1 style={{ color: '#0f172a', margin: '0 0 5px 0', fontSize: '1.8rem', fontWeight: '800' }}>Painel Executivo</h1>
+          <p style={{ color: '#64748b', margin: 0, fontSize: '0.95rem' }}>Monitoramento de editais e saúde documental da Nordeste Emergências.</p>
         </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          {isAdmin && (
-            <Link href="/acessos">
-              <button style={{ padding: '10px 20px', backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>🔐 Acessos</button>
-            </Link>
+        <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Pipeline Total</div>
+            <div style={{ fontSize: '1.8rem', fontWeight: '900', color: '#10b981' }}>{formatarMoeda(kpis.valorEmDisputa)}</div>
+          </div>
+          {alertasGerais > 0 && (
+            <div style={{ background: '#ef4444', color: 'white', padding: '12px 20px', borderRadius: '12px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 15px rgba(239, 68, 68, 0.4)' }}>
+              <span style={{ fontSize: '1.2rem', animation: 'pulse 2s infinite' }}>🚨</span> {alertasGerais} Alertas
+            </div>
           )}
-          <button onClick={signOut} style={{ padding: '10px 20px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>Sair</button>
         </div>
       </div>
 
-      {/* Grid de Métricas High-End */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', marginBottom: '40px' }}>
-        <MetricCard title="Total de Licitações" value={metrics.total} color="#3b82f6" icon="📊" />
-        <MetricCard title="Taxa de Vitória" value={`${taxaConversao}%`} color="#10b981" icon="🏆" />
-        <MetricCard title="Valor Total Ganho" value={metrics.valorGanho.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} color="#f59e0b" icon="💰" />
-        <MetricCard title="Contratos Ativos" value={metrics.contratos} subtitle={`${(metrics.valorContratos / 1e6).toFixed(1)}M em carteira`} color="#8b5cf6" icon="📜" />
-      </div>
-
-      {/* Gráficos */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '30px', marginBottom: '40px' }}>
-        <div style={chartCardStyle}>
-          <h3 style={chartTitleStyle}>Distribuição de Status</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie data={dadosStatus} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                {dadosStatus.map((_, i) => <Cell key={`cell-${i}`} fill={COLORS[i % COLORS.length]} />)}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
+      {/* 4 CARDS MACRO */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', marginBottom: '30px' }}>
+        <div style={{ background: '#fff', padding: '25px', borderRadius: '16px', borderTop: '4px solid #3b82f6', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+          <div style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '10px' }}>Licitações Ativas</div>
+          <div style={{ fontSize: '2.5rem', fontWeight: '900', color: '#0f172a' }}>{kpis.totalLicitacoes}</div>
         </div>
-
-        <div style={chartCardStyle}>
-          <h3 style={chartTitleStyle}>Desempenho Mensal (Criadas vs Ganhas)</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={dadosEvolucao}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="nome" axisLine={false} tickLine={false} />
-              <YAxis axisLine={false} tickLine={false} />
-              <Tooltip />
-              <Legend />
-              <Line type="monotone" dataKey="criadas" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4 }} name="Criadas" />
-              <Line type="monotone" dataKey="ganhas" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} name="Ganhas" />
-            </LineChart>
-          </ResponsiveContainer>
+        <div style={{ background: '#fff', padding: '25px', borderRadius: '16px', borderTop: '4px solid #f59e0b', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+          <div style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '10px' }}>Contratos Vigentes</div>
+          <div style={{ fontSize: '2.5rem', fontWeight: '900', color: '#0f172a' }}>{kpis.totalContratos}</div>
+        </div>
+        <div style={{ background: '#fff', padding: '25px', borderRadius: '16px', borderTop: '4px solid #8b5cf6', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+          <div style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '10px' }}>Órgãos Atendidos</div>
+          <div style={{ fontSize: '2.5rem', fontWeight: '900', color: '#0f172a' }}>{kpis.totalOrgaos}</div>
+        </div>
+        <div style={{ background: '#fff', padding: '25px', borderRadius: '16px', borderTop: '4px solid #10b981', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+          <div style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '10px' }}>Documentos Monitorados</div>
+          <div style={{ fontSize: '2.5rem', fontWeight: '900', color: '#0f172a' }}>{kpis.docsAtivos}</div>
         </div>
       </div>
 
-      {/* Alertas Rápidos */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px' }}>
-        <AlertBox title="⚠️ Certidões Próximas do Vencimento" data={proximasCertidoes} type="cert" />
-        <div style={chartCardStyle}>
-          <h3 style={chartTitleStyle}>Ações Rápidas</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-            <QuickBtn href="/licitacoes/novo" label="Nova Licitação" color="#3b82f6" />
-            <QuickBtn href="/certidoes/novo" label="Nova Certidão" color="#10b981" />
-            <QuickBtn href="/contratos/novo" label="Novo Contrato" color="#8b5cf6" />
-            <QuickBtn href="/recebimentos/novo" label="Novo Recebimento" color="#f59e0b" />
+      {/* SEÇÃO DO MEIO: FUNIL & MODALIDADES */}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '30px', marginBottom: '30px' }}>
+        
+        {/* GRÁFICO 1: FUNIL DE STATUS */}
+        <div style={{ background: '#fff', borderRadius: '16px', padding: '30px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+          <h2 style={{ fontSize: '1.1rem', color: '#0f172a', margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            📊 Pipeline de Licitações (Status)
+          </h2>
+          {statusOrdenados.length === 0 ? (
+             <p style={{ color: '#94a3b8', fontStyle: 'italic' }}>Nenhuma licitação cadastrada para gerar o gráfico.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              {statusOrdenados.map(([nomeStatus, quantidade], index) => {
+                const porcentagem = Math.round((quantidade / kpis.totalLicitacoes) * 100)
+                const cores = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#64748b']
+                const corAtual = cores[index % cores.length]
+                
+                return (
+                  <div key={nomeStatus}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', marginBottom: '6px', fontWeight: '600', color: '#334155' }}>
+                      <span>{nomeStatus}</span>
+                      <span>{quantidade} ({porcentagem}%)</span>
+                    </div>
+                    <div style={{ width: '100%', background: '#f1f5f9', borderRadius: '10px', height: '12px', overflow: 'hidden' }}>
+                      <div style={{ width: `${porcentagem}%`, background: corAtual, height: '100%', borderRadius: '10px', transition: 'width 1s ease-out' }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* GRÁFICO 2: MODALIDADES */}
+        <div style={{ background: '#fff', borderRadius: '16px', padding: '30px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+          <h2 style={{ fontSize: '1.1rem', color: '#0f172a', margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            🎯 Top Modalidades
+          </h2>
+          {modalidadesOrdenadas.length === 0 ? (
+             <p style={{ color: '#94a3b8', fontStyle: 'italic' }}>Sem dados.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {modalidadesOrdenadas.map(([mod, qtd]) => (
+                <div key={mod} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                  <span style={{ fontSize: '0.9rem', fontWeight: '600', color: '#475569' }}>{mod}</span>
+                  <span style={{ background: '#e2e8f0', color: '#0f172a', padding: '4px 10px', borderRadius: '20px', fontSize: '0.85rem', fontWeight: 'bold' }}>{qtd}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* SEÇÃO INFERIOR: AVISOS CRÍTICOS (TABELAS) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '30px' }}>
+        
+        {/* LICITAÇÕES PRÓXIMAS */}
+        <div style={{ background: '#fff', borderRadius: '16px', padding: '30px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <h2 style={{ fontSize: '1.2rem', color: '#0f172a', margin: 0 }}>🗓️ Próximas Sessões</h2>
+            <Link href="/licitacoes" style={{ fontSize: '0.85rem', color: '#3b82f6', fontWeight: 'bold', textDecoration: 'none' }}>Ver todas</Link>
           </div>
+          
+          {licitacoesProximas.length === 0 ? (
+            <p style={{ color: '#94a3b8', textAlign: 'center', padding: '20px' }}>Agenda tranquila nos próximos 15 dias.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {licitacoesProximas.map(lic => (
+                <div key={lic.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #f1f5f9' }}>
+                  <div>
+                    <strong style={{ display: 'block', color: '#1e293b', fontSize: '0.9rem' }}>{lic.identificacao}</strong>
+                    <span style={{ fontSize: '0.8rem', color: '#64748b' }}>{lic.status || 'Pendente'}</span>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <span style={{ display: 'block', fontWeight: 'bold', color: '#d97706', fontSize: '0.95rem' }}>{formatarData(lic.data_limite_participacao)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-      </div>
-    </div>
-  )
-}
 
-// Sub-componentes Estilizados
-function MetricCard({ title, value, subtitle, color, icon }: any) {
-  return (
-    <div style={{ backgroundColor: 'white', padding: '25px', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', borderLeft: `6px solid ${color}` }}>
-      <div style={{ fontSize: '24px', marginBottom: '10px' }}>{icon}</div>
-      <div style={{ color: '#64748b', fontSize: '14px', fontWeight: '600', textTransform: 'uppercase' }}>{title}</div>
-      <div style={{ fontSize: '28px', fontWeight: 'bold', color: '#1e293b', margin: '5px 0' }}>{value}</div>
-      {subtitle && <div style={{ fontSize: '12px', color: '#94a3b8' }}>{subtitle}</div>}
-    </div>
-  )
-}
-
-function AlertBox({ title, data, type }: any) {
-  return (
-    <div style={{ ...chartCardStyle, borderTop: '4px solid #f59e0b' }}>
-      <h3 style={chartTitleStyle}>{title}</h3>
-      {data.length > 0 ? (
-        data.map((item: any) => (
-          <div key={item.id} style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ fontWeight: '600' }}>{item.nome_certidao || item.identificacao}</span>
-            <span style={{ color: '#ef4444', fontWeight: 'bold' }}>{item.vencimento ? new Date(item.vencimento).toLocaleDateString('pt-BR') : '—'}</span>
+        {/* DOCUMENTOS VENCENDO */}
+        <div style={{ background: '#fff', borderRadius: '16px', padding: '30px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <h2 style={{ fontSize: '1.2rem', color: '#0f172a', margin: 0 }}>⚠️ Atenção: Documentos</h2>
+            <Link href="/documentos" style={{ fontSize: '0.85rem', color: '#ef4444', fontWeight: 'bold', textDecoration: 'none' }}>Atualizar</Link>
           </div>
-        ))
-      ) : <p style={{ color: '#94a3b8' }}>Tudo em dia por aqui!</p>}
+          
+          {documentos.length === 0 ? (
+            <p style={{ color: '#94a3b8', textAlign: 'center', padding: '20px' }}>Nenhum documento crítico.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {documentos.map(doc => {
+                const isVencido = new Date(doc.vencimento + 'T00:00:00') < new Date()
+                const codigoUnidade = Array.isArray(doc.unidades) ? doc.unidades[0]?.codigo : doc.unidades?.codigo
+
+                return (
+                  <div key={doc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #f1f5f9' }}>
+                    <div>
+                      <strong style={{ display: 'block', color: '#1e293b', fontSize: '0.9rem' }}>{doc.nome}</strong>
+                      <span style={{ fontSize: '0.75rem', background: '#f1f5f9', padding: '2px 6px', borderRadius: '4px' }}>{codigoUnidade || 'Geral'}</span>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <span style={{ display: 'block', fontWeight: 'bold', color: isVencido ? '#ef4444' : '#d97706', fontSize: '0.95rem' }}>
+                        {isVencido ? 'VENCIDO' : formatarData(doc.vencimento)}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+      </div>
+
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.5; transform: scale(1.1); }
+        }
+      `}</style>
     </div>
   )
 }
-
-function QuickBtn({ href, label, color }: any) {
-  return (
-    <Link href={href} style={{ textDecoration: 'none' }}>
-      <div style={{ padding: '15px', backgroundColor: color, color: 'white', borderRadius: '12px', textAlign: 'center', fontWeight: 'bold', cursor: 'pointer' }}>{label}</div>
-    </Link>
-  )
-}
-
-const chartCardStyle = { backgroundColor: 'white', padding: '25px', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }
-const chartTitleStyle = { margin: '0 0 20px 0', fontSize: '16px', color: '#1e293b' }
-const centerStyle = { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', color: '#64748b', fontWeight: 'bold' }

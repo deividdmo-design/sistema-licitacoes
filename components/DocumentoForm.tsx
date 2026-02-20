@@ -13,16 +13,7 @@ interface Unidade {
   cnpj: string
 }
 
-const tipos = [
-  'Fiscal',
-  'Jurídico',
-  'Econômico',
-  'Técnico',
-  'Conselho',
-  'Atestado',
-  'Alvará',
-  'Outro'
-]
+const tipos = ['Fiscal', 'Jurídico', 'Econômico', 'Técnico', 'Conselho', 'Atestado', 'Alvará', 'Outro']
 
 export default function DocumentoForm({ documentoId }: DocumentoFormProps) {
   const router = useRouter()
@@ -35,34 +26,25 @@ export default function DocumentoForm({ documentoId }: DocumentoFormProps) {
     tipo: '',
     unidade_id: '',
     data_emissao: '',
-    validade_dias: '',
-    observacoes: '',
+    vencimento: '', // Trocado de validade_dias para vencimento
+    descricao: '',
     arquivo_url: ''
   })
   const [file, setFile] = useState<File | null>(null)
 
   useEffect(() => {
     carregarUnidades()
-    if (documentoId) {
-      carregarDocumento()
-    }
+    if (documentoId) carregarDocumento()
   }, [documentoId])
 
   async function carregarUnidades() {
-    const { data } = await supabase
-      .from('unidades')
-      .select('id, codigo, razao_social, cnpj')
-      .order('codigo')
+    const { data } = await supabase.from('unidades').select('id, codigo, razao_social, cnpj').order('codigo')
     setUnidades(data || [])
   }
 
   async function carregarDocumento() {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('documentos')
-      .select('*')
-      .eq('id', documentoId)
-      .single()
+    const { data, error } = await supabase.from('documentos').select('*').eq('id', documentoId).single()
     if (error) {
       alert('Erro ao carregar documento')
     } else if (data) {
@@ -72,8 +54,8 @@ export default function DocumentoForm({ documentoId }: DocumentoFormProps) {
         tipo: data.tipo || '',
         unidade_id: data.unidade_id || '',
         data_emissao: data.data_emissao || '',
-        validade_dias: data.validade_dias ? data.validade_dias.toString() : '',
-        observacoes: data.observacoes || '',
+        vencimento: data.vencimento || '', // Carrega a data de vencimento
+        descricao: data.descricao || '',
         arquivo_url: data.arquivo_url || ''
       })
     }
@@ -86,23 +68,23 @@ export default function DocumentoForm({ documentoId }: DocumentoFormProps) {
   }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setFile(e.target.files[0])
-    }
+    if (e.target.files && e.target.files.length > 0) setFile(e.target.files[0])
   }
 
-  async function uploadFile(file: File, documentoId: string) {
+  async function uploadFile(file: File, documentoId: string, urlAntiga?: string) {
+    if (urlAntiga) {
+      try {
+        const caminhoAntigo = urlAntiga.split('/').pop()
+        if (caminhoAntigo) await supabase.storage.from('documentos').remove([caminhoAntigo])
+      } catch (err) {
+        console.error("Erro ao limpar arquivo:", err)
+      }
+    }
     const fileExt = file.name.split('.').pop()
-    const fileName = `${documentoId}.${fileExt}`
-    const filePath = fileName
-
-    const { error } = await supabase.storage
-      .from('documentos')
-      .upload(filePath, file, { upsert: true })
-
+    const fileName = `${documentoId}_${Date.now()}.${fileExt}`
+    const { error } = await supabase.storage.from('documentos').upload(fileName, file, { upsert: true })
     if (error) throw error
-
-    const { data } = supabase.storage.from('documentos').getPublicUrl(filePath)
+    const { data } = supabase.storage.from('documentos').getPublicUrl(fileName)
     return data.publicUrl
   }
 
@@ -111,59 +93,36 @@ export default function DocumentoForm({ documentoId }: DocumentoFormProps) {
     setLoading(true)
 
     try {
-      let arquivo_url = formData.arquivo_url
-
       const dadosParaSalvar = {
         nome: formData.nome,
         tipo: formData.tipo,
         unidade_id: formData.unidade_id || null,
         data_emissao: semValidade ? null : formData.data_emissao || null,
-        validade_dias: semValidade ? null : (formData.validade_dias ? parseInt(formData.validade_dias) : null),
+        vencimento: semValidade ? null : formData.vencimento || null, // Salva a data direta
         sem_validade: semValidade,
-        observacoes: formData.observacoes || null,
-        arquivo_url: arquivo_url || null
+        descricao: formData.descricao || null,
+        arquivo_url: formData.arquivo_url || null
       }
 
       if (documentoId) {
-        // Atualização
-        const { error } = await supabase
-          .from('documentos')
-          .update(dadosParaSalvar)
-          .eq('id', documentoId)
+        const { error } = await supabase.from('documentos').update(dadosParaSalvar).eq('id', documentoId)
         if (error) throw error
-
-        // Se tiver novo arquivo, faz upload e atualiza
         if (file) {
           setUploading(true)
-          const publicUrl = await uploadFile(file, documentoId)
-          const { error: updateError } = await supabase
-            .from('documentos')
-            .update({ arquivo_url: publicUrl })
-            .eq('id', documentoId)
-          if (updateError) throw updateError
+          const publicUrl = await uploadFile(file, documentoId, formData.arquivo_url)
+          await supabase.from('documentos').update({ arquivo_url: publicUrl }).eq('id', documentoId)
           setUploading(false)
         }
       } else {
-        // Inserção
-        const { data: inserted, error } = await supabase
-          .from('documentos')
-          .insert([dadosParaSalvar])
-          .select('id')
-          .single()
+        const { data: inserted, error } = await supabase.from('documentos').insert([dadosParaSalvar]).select('id').single()
         if (error) throw error
-
         if (file) {
           setUploading(true)
           const publicUrl = await uploadFile(file, inserted.id)
-          const { error: updateError } = await supabase
-            .from('documentos')
-            .update({ arquivo_url: publicUrl })
-            .eq('id', inserted.id)
-          if (updateError) throw updateError
+          await supabase.from('documentos').update({ arquivo_url: publicUrl }).eq('id', inserted.id)
           setUploading(false)
         }
       }
-
       router.push('/documentos')
     } catch (error: any) {
       alert('Erro ao salvar: ' + error.message)
@@ -175,127 +134,65 @@ export default function DocumentoForm({ documentoId }: DocumentoFormProps) {
   if (loading && documentoId) return <p>Carregando...</p>
 
   return (
-    <form onSubmit={handleSubmit} style={{ maxWidth: '600px', margin: '0 auto' }}>
+    <form onSubmit={handleSubmit} style={{ maxWidth: '600px', margin: '0 auto', padding: '20px', border: '1px solid #eee', borderRadius: '10px', background: '#fff' }}>
       <h1>{documentoId ? 'Editar Documento' : 'Novo Documento'}</h1>
 
       <div style={{ marginBottom: '15px' }}>
         <label style={{ display: 'block', marginBottom: '5px' }}>Nome do Documento *</label>
-        <input
-          type="text"
-          name="nome"
-          value={formData.nome}
-          onChange={handleChange}
-          required
-          style={{ width: '100%', padding: '8px' }}
-        />
+        <input type="text" name="nome" value={formData.nome} onChange={handleChange} required style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }} />
       </div>
 
       <div style={{ marginBottom: '15px' }}>
         <label style={{ display: 'block', marginBottom: '5px' }}>Tipo *</label>
-        <select
-          name="tipo"
-          value={formData.tipo}
-          onChange={handleChange}
-          required
-          style={{ width: '100%', padding: '8px' }}
-        >
+        <select name="tipo" value={formData.tipo} onChange={handleChange} required style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }}>
           <option value="">Selecione</option>
-          {tipos.map(t => (
-            <option key={t} value={t}>{t}</option>
-          ))}
+          {tipos.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
       </div>
 
       <div style={{ marginBottom: '15px' }}>
         <label style={{ display: 'block', marginBottom: '5px' }}>Origem (Unidade)</label>
-        <select
-          name="unidade_id"
-          value={formData.unidade_id}
-          onChange={handleChange}
-          style={{ width: '100%', padding: '8px' }}
-        >
+        <select name="unidade_id" value={formData.unidade_id} onChange={handleChange} style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }}>
           <option value="">Geral</option>
-          {unidades.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.codigo} - {u.razao_social}
-            </option>
-          ))}
+          {unidades.map(u => <option key={u.id} value={u.id}>{u.codigo} - {u.razao_social}</option>)}
         </select>
       </div>
 
       <div style={{ marginBottom: '15px' }}>
-        <label style={{ display: 'block', marginBottom: '5px' }}>
-          <input
-            type="checkbox"
-            checked={semValidade}
-            onChange={(e) => setSemValidade(e.target.checked)}
-          />
-          {' '}Documento sem validade
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+          <input type="checkbox" checked={semValidade} onChange={(e) => setSemValidade(e.target.checked)} />
+          Documento sem validade
         </label>
       </div>
 
       {!semValidade && (
-        <>
-          <div style={{ marginBottom: '15px' }}>
+        <div style={{ display: 'flex', gap: '15px', marginBottom: '15px' }}>
+          <div style={{ flex: 1 }}>
             <label style={{ display: 'block', marginBottom: '5px' }}>Data de Emissão</label>
-            <input
-              type="date"
-              name="data_emissao"
-              value={formData.data_emissao}
-              onChange={handleChange}
-              style={{ width: '100%', padding: '8px' }}
-            />
+            <input type="date" name="data_emissao" value={formData.data_emissao} onChange={handleChange} style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }} />
           </div>
-
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px' }}>Validade (dias)</label>
-            <input
-              type="number"
-              name="validade_dias"
-              value={formData.validade_dias}
-              onChange={handleChange}
-              min="1"
-              style={{ width: '100%', padding: '8px' }}
-            />
-            <small>O vencimento será calculado automaticamente.</small>
+          <div style={{ flex: 1 }}>
+            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Data de Vencimento</label>
+            <input type="date" name="vencimento" value={formData.vencimento} onChange={handleChange} style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }} />
           </div>
-        </>
+        </div>
       )}
 
       <div style={{ marginBottom: '15px' }}>
-        <label style={{ display: 'block', marginBottom: '5px' }}>Observações</label>
-        <textarea
-          name="observacoes"
-          value={formData.observacoes}
-          onChange={handleChange}
-          rows={3}
-          style={{ width: '100%', padding: '8px' }}
-        />
+        <label style={{ display: 'block', marginBottom: '5px' }}>Descrição / Observações</label>
+        <textarea name="descricao" value={formData.descricao} onChange={handleChange} rows={3} style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }} />
       </div>
 
-      <div style={{ marginBottom: '15px' }}>
+      <div style={{ marginBottom: '20px', padding: '15px', background: '#f9f9f9', borderRadius: '5px' }}>
         <label style={{ display: 'block', marginBottom: '5px' }}>Arquivo (PDF)</label>
-        <input
-          type="file"
-          accept=".pdf"
-          onChange={handleFileChange}
-          style={{ width: '100%', padding: '8px' }}
-        />
+        <input type="file" accept=".pdf" onChange={handleFileChange} style={{ width: '100%' }} />
         {formData.arquivo_url && (
-          <div style={{ marginTop: '5px' }}>
-            <a href={formData.arquivo_url} target="_blank" rel="noopener noreferrer">
-              Ver arquivo atual
-            </a>
-          </div>
+          <div style={{ marginTop: '10px' }}><a href={formData.arquivo_url} target="_blank" rel="noopener noreferrer">📄 Ver arquivo atual</a></div>
         )}
       </div>
 
-      <button
-        type="submit"
-        disabled={loading || uploading}
-        style={{ padding: '10px 20px', background: '#0070f3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
-      >
-        {loading ? 'Salvando...' : uploading ? 'Enviando arquivo...' : 'Salvar'}
+      <button type="submit" disabled={loading || uploading} style={{ width: '100%', padding: '12px', background: '#0070f3', color: 'white', border: 'none', borderRadius: '5px', cursor: (loading || uploading) ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
+        {loading ? 'Salvando...' : uploading ? 'Enviando arquivo...' : 'Salvar Documento'}
       </button>
     </form>
   )

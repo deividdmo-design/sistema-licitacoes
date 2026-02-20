@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/router'
 import { useState, useEffect } from 'react'
 import { isAdmin } from '../lib/userProfile'
+import NotificacaoLicitacao from './NotificacaoLicitacao'
 
 interface MenuItem {
   label: string
@@ -15,7 +16,8 @@ const menuItems: MenuItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: '📊' },
   { label: 'Licitações', href: '/licitacoes', icon: '📋' },
   { label: 'Contratos', href: '/contratos', icon: '📑' },
-  { label: 'Certidões', href: '/certidoes', icon: '📄' },
+  // ALTERADO: De 'Certidões' (/certidoes) para 'Documentos' (/documentos)
+  { label: 'Documentos', href: '/documentos', icon: '📄' }, 
   { label: 'Recebimentos', href: '/recebimentos', icon: '💰' },
   { label: 'Órgãos', href: '/clientes', icon: '🏢' },
   { label: 'Relatórios', href: '/relatorios', icon: '📈' },
@@ -41,17 +43,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', fontFamily: 'sans-serif' }}>
-      {/* Menu lateral Profissional */}
       <aside style={{
         width: '260px',
-        background: '#1e293b', // Azul Slate escuro (Corporativo)
-        color: '#f8fafc',      // Texto quase branco para leitura perfeita
+        background: '#1e293b',
+        color: '#f8fafc',
         display: 'flex',
         flexDirection: 'column',
         boxShadow: '4px 0 10px rgba(0,0,0,0.15)',
         zIndex: 10
       }}>
-        {/* Cabeçalho da Empresa */}
         <div style={{ padding: '30px 24px', borderBottom: '1px solid #334155' }}>
           <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, color: '#ffffff', letterSpacing: '-0.5px' }}>
             Nordeste
@@ -61,12 +61,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </p>
         </div>
 
-        {/* Navegação */}
         <nav style={{ padding: '20px 12px', flex: 1 }}>
           {menuItems.map(item => {
             if (item.adminOnly && !admin) return null
             
-            const isActive = router.pathname === item.href
+            const isActive = router.pathname.startsWith(item.href) // Melhorado para manter ativo em sub-rotas
 
             return (
               <Link key={item.href} href={item.href} style={{ textDecoration: 'none' }}>
@@ -75,8 +74,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   marginBottom: '4px',
                   borderRadius: '8px',
                   cursor: 'pointer',
-                  background: isActive ? '#3b82f6' : 'transparent', // Azul vibrante no ativo
-                  color: isActive ? '#ffffff' : '#cbd5e1',         // Branco no ativo, cinza no inativo
+                  background: isActive ? '#3b82f6' : 'transparent',
+                  color: isActive ? '#ffffff' : '#cbd5e1',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '12px',
@@ -100,10 +99,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </nav>
       </aside>
 
-      {/* Conteúdo principal */}
+        {/* Conteúdo principal */}
       <main style={{ flex: 1, background: '#f1f5f9', padding: '30px', overflowY: 'auto' }}>
         {children}
       </main>
+
+      <NotificacaoLicitacao />
     </div>
   )
 }

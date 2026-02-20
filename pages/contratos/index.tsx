@@ -1,31 +1,33 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import Link from 'next/link'
-import * as XLSX from 'xlsx'
-import jsPDF from 'jspdf'
-import autoTable from 'jspdf-autotable'
-import { linkContratoCalendario } from '../../lib/googleCalendar'
+
+interface Orgao {
+  razao_social?: string
+}
+
+interface Licitacao {
+  identificacao?: string
+}
 
 interface Contrato {
   id: string
   numero_contrato: string
   objeto: string
-  valor_total: number
+  valor: number
   data_assinatura: string
-  vigencia_inicio: string
-  vigencia_fim: string
-  arquivo_url: string | null
-  licitacoes?: {
-    identificacao: string
-    orgaos?: { razao_social: string }
-  }
+  vigencia: string
+  status: string
+  arquivo_url?: string
+  orgaos?: Orgao
+  licitacoes?: Licitacao
 }
 
-export default function ListaContratos() {
+export default function ContratosLista() {
   const [contratos, setContratos] = useState<Contrato[]>([])
   const [loading, setLoading] = useState(true)
-  const [totalContratos, setTotalContratos] = useState(0)
-  const [valorTotal, setValorTotal] = useState(0)
+  const [busca, setBusca] = useState('')
+  const [filtroStatus, setFiltroStatus] = useState('Todos')
 
   useEffect(() => {
     carregarContratos()
@@ -33,202 +35,250 @@ export default function ListaContratos() {
 
   async function carregarContratos() {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('contratos')
-      .select(`
-        *,
-        licitacoes (
-          identificacao,
-          orgaos ( razao_social )
-        )
-      `)
-      .order('data_assinatura', { ascending: false })
+    try {
+      // Busca os contratos e tenta puxar o nome do órgão e o número da licitação
+      const { data, error } = await supabase
+        .from('contratos')
+        .select('*')
+        .order('data_assinatura', { ascending: false })
 
-    if (error) {
-      console.error('Erro ao carregar contratos:', error)
-      alert('Erro ao carregar dados. Verifique o console.')
-    } else {
-      setContratos(data || [])
-      setTotalContratos(data?.length || 0)
-      const total = (data || []).reduce((acc, c) => acc + (c.valor_total || 0), 0)
-      setValorTotal(total)
+      if (error) throw error
+      if (data) setContratos(data as any)
+    } catch (error) {
+      console.error('Erro ao buscar contratos:', error)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   async function excluirContrato(id: string) {
-    if (!confirm('Tem certeza que deseja excluir este contrato?')) return
-    const { error } = await supabase.from('contratos').delete().eq('id', id)
-    if (error) {
-      console.error('Erro ao excluir:', error)
-      alert('Erro ao excluir: ' + error.message)
-    } else {
-      alert('Contrato excluído com sucesso!')
+    if (!confirm('Tem certeza que deseja excluir este contrato? Essa ação não pode ser desfeita.')) return
+    
+    try {
+      const { error } = await supabase.from('contratos').delete().eq('id', id)
+      if (error) throw error
       carregarContratos()
+    } catch (error: any) {
+      alert('Erro ao excluir: ' + error.message)
     }
   }
 
   function formatarData(dataISO: string) {
-    if (!dataISO) return ''
+    if (!dataISO) return '-'
     const [ano, mes, dia] = dataISO.split('-')
     return `${dia}/${mes}/${ano}`
   }
 
-  function calcularDiasRestantes(vencimentoISO: string) {
-    if (!vencimentoISO) return null
-    const hoje = new Date()
-    hoje.setHours(0, 0, 0, 0)
-    const venc = new Date(vencimentoISO + 'T00:00:00')
-    const diff = venc.getTime() - hoje.getTime()
-    return Math.ceil(diff / (1000 * 60 * 60 * 24))
+  function formatarMoeda(valor: number) {
+    if (!valor) return 'R$ 0,00'
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor)
   }
 
-  function getStatusText(vencimentoISO: string) {
-    const dias = calcularDiasRestantes(vencimentoISO)
-    if (dias === null) return '—'
-    if (dias < 0) return 'Vencido'
-    if (dias <= 30) return `Vence em ${dias} dias`
-    return 'Válido'
+  // Define as cores dos badges de acordo com o status do contrato
+  function getStatusEstilo(status: string, vigenciaISO: string) {
+    const s = status?.toLowerCase() || ''
+    
+    // Verifica se a data de vigência já passou (independente do status escrito)
+    let estaVencido = false
+    if (vigenciaISO) {
+      const dataVigencia = new Date(vigenciaISO + 'T00:00:00')
+      const hoje = new Date()
+      hoje.setHours(0,0,0,0)
+      if (dataVigencia < hoje) estaVencido = true
+    }
+
+    if (estaVencido || s.includes('vencido') || s.includes('encerrado')) return { bg: '#fee2e2', color: '#991b1b', texto: 'Vencido / Encerrado' }
+    if (s.includes('vigente') || s.includes('ativo') || s.includes('andamento')) return { bg: '#dcfce7', color: '#166534', texto: status || 'Vigente' }
+    if (s.includes('suspenso') || s.includes('paralisado')) return { bg: '#fef3c7', color: '#92400e', texto: status || 'Suspenso' }
+    
+    return { bg: '#f1f5f9', color: '#475569', texto: status || 'Pendente' }
   }
 
-  // Exportação Excel
-  function exportarExcel() {
-    const dados = contratos.map(c => ({
-      'Nº Contrato': c.numero_contrato,
-      'Órgão': c.licitacoes?.orgaos?.razao_social || '',
-      'Licitação': c.licitacoes?.identificacao || '',
-      'Objeto': c.objeto || '',
-      'Valor Total': c.valor_total,
-      'Assinatura': c.data_assinatura,
-      'Vigência Fim': c.vigencia_fim,
-      'Status': getStatusText(c.vigencia_fim),
-    }))
-    const ws = XLSX.utils.json_to_sheet(dados)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Contratos')
-    XLSX.writeFile(wb, 'contratos.xlsx')
-  }
+  // Cálculos para os Cards do Topo (KPIs)
+  const valorTotal = contratos.reduce((acc, curr) => acc + (Number(curr.valor) || 0), 0)
+  
+  // Lógica de filtro e busca
+  const contratosFiltrados = contratos.filter(c => {
+    const termoBusca = busca.toLowerCase()
+    const nomeOrgao = (c.orgaos?.razao_social || '').toLowerCase()
+    const numLicitacao = (c.licitacoes?.identificacao || '').toLowerCase()
+    
+    const bateBusca = 
+      (c.numero_contrato || '').toLowerCase().includes(termoBusca) || 
+      (c.objeto || '').toLowerCase().includes(termoBusca) || 
+      nomeOrgao.includes(termoBusca) ||
+      numLicitacao.includes(termoBusca)
+      
+    const bateStatus = filtroStatus === 'Todos' || c.status === filtroStatus
+    
+    return bateBusca && bateStatus
+  })
 
-  // Exportação PDF
-  function exportarPDF() {
-    const doc = new jsPDF()
-    const dataAtual = new Date().toLocaleDateString('pt-BR')
-    doc.setFontSize(16)
-    doc.text('Relatório de Contratos', 14, 20)
-    doc.setFontSize(10)
-    doc.text(`Data de emissão: ${dataAtual}`, 14, 28)
-
-    const colunas = ['Nº Contrato', 'Órgão', 'Licitação', 'Valor Total', 'Vigência Fim', 'Status']
-    const linhas = contratos.map(c => [
-      c.numero_contrato,
-      c.licitacoes?.orgaos?.razao_social || '',
-      c.licitacoes?.identificacao || '',
-      c.valor_total ? `R$ ${c.valor_total.toFixed(2)}` : '',
-      formatarData(c.vigencia_fim),
-      getStatusText(c.vigencia_fim),
-    ])
-
-    autoTable(doc, { startY: 35, head: [colunas], body: linhas })
-    doc.save('contratos.pdf')
-  }
-
-  if (loading) return <p>Carregando...</p>
+  // Extrai lista de status únicos para o select de filtro
+  const statusUnicos = ['Todos', ...Array.from(new Set(contratos.map(c => c.status).filter(Boolean)))]
 
   return (
-    <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>
-      <h1>Contratos</h1>
-
-      {/* Cards de resumo */}
-      <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
-        <div style={{ background: '#e3f2fd', padding: '15px', borderRadius: '8px', flex: 1, textAlign: 'center' }}>
-          <strong>Total de Contratos</strong>
-          <p style={{ fontSize: '2rem', margin: '5px 0' }}>{totalContratos}</p>
+    <div style={{ maxWidth: '1400px', margin: '0 auto', fontFamily: '"Inter", sans-serif', paddingBottom: '40px' }}>
+      
+      {/* CABEÇALHO */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', flexWrap: 'wrap', gap: '15px' }}>
+        <div>
+          <h1 style={{ color: '#0f172a', margin: '0 0 5px 0', fontSize: '2rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            🤝 Gestão de Contratos
+          </h1>
+          <p style={{ color: '#64748b', margin: 0 }}>Administre valores, vigências e documentos de contratos ativos.</p>
         </div>
-        <div style={{ background: '#d4edda', padding: '15px', borderRadius: '8px', flex: 1, textAlign: 'center' }}>
-          <strong>Valor Total</strong>
-          <p style={{ fontSize: '2rem', margin: '5px 0' }}>
-            {valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-          </p>
-        </div>
-      </div>
-
-      <div style={{ marginBottom: '20px' }}>
-        <Link href="/contratos/novo">
-          <button style={{ marginRight: '10px', padding: '10px 20px', background: '#0070f3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
-            Novo Contrato
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button style={{ background: '#f8fafc', color: '#10b981', border: '1px solid #10b981', padding: '12px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            📊 Exportar Excel
           </button>
-        </Link>
-        <button onClick={exportarExcel} style={{ marginRight: '10px', padding: '10px 20px', background: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
-          Exportar Excel
-        </button>
-        <button onClick={exportarPDF} style={{ padding: '10px 20px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
-          Exportar PDF
-        </button>
+          <Link href="/contratos/novo">
+            <button style={{ background: '#3b82f6', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 6px -1px rgba(59, 130, 246, 0.3)' }}>
+              <span>➕</span> Novo Contrato
+            </button>
+          </Link>
+        </div>
       </div>
 
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr style={{ background: '#f0f0f0' }}>
-            <th style={{ padding: '10px', textAlign: 'left' }}>Nº Contrato</th>
-            <th style={{ padding: '10px', textAlign: 'left' }}>Órgão</th>
-            <th style={{ padding: '10px', textAlign: 'left' }}>Licitação</th>
-            <th style={{ padding: '10px', textAlign: 'left' }}>Objeto</th>
-            <th style={{ padding: '10px', textAlign: 'left' }}>Valor</th>
-            <th style={{ padding: '10px', textAlign: 'left' }}>Assinatura</th>
-            <th style={{ padding: '10px', textAlign: 'left' }}>Vigência</th>
-            <th style={{ padding: '10px', textAlign: 'left' }}>Status</th>
-            <th style={{ padding: '10px', textAlign: 'left' }}>Arquivo</th>
-            <th style={{ padding: '10px', textAlign: 'left' }}>Calendário</th>
-            <th style={{ padding: '10px', textAlign: 'left' }}>Ações</th>
-          </tr>
-        </thead>
-        <tbody>
-          {contratos.map((c) => {
-            const statusText = getStatusText(c.vigencia_fim)
-            return (
-              <tr key={c.id} style={{ borderBottom: '1px solid #ddd' }}>
-                <td style={{ padding: '10px' }}>
-                  <Link href={`/contratos/${c.id}`}>{c.numero_contrato}</Link>
-                </td>
-                <td style={{ padding: '10px' }}>{c.licitacoes?.orgaos?.razao_social || '—'}</td>
-                <td style={{ padding: '10px' }}>{c.licitacoes?.identificacao || '—'}</td>
-                <td style={{ padding: '10px' }}>{c.objeto || '—'}</td>
-                <td style={{ padding: '10px' }}>
-                  {c.valor_total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                </td>
-                <td style={{ padding: '10px' }}>{formatarData(c.data_assinatura)}</td>
-                <td style={{ padding: '10px' }}>
-                  {formatarData(c.vigencia_inicio)} a {formatarData(c.vigencia_fim)}
-                </td>
-                <td style={{ padding: '10px' }}>{statusText}</td>
-                <td style={{ padding: '10px' }}>
-                  {c.arquivo_url ? (
-                    <a href={c.arquivo_url} target="_blank" rel="noopener noreferrer">📄</a>
-                  ) : '—'}
-                </td>
-                <td style={{ padding: '10px', textAlign: 'center' }}>
-                  {c.vigencia_fim ? (
-                    <a
-                      href={linkContratoCalendario(c)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title="Adicionar vencimento ao Google Calendar"
-                    >
-                      📅
-                    </a>
-                  ) : '—'}
-                </td>
-                <td style={{ padding: '10px' }}>
-                  <Link href={`/contratos/editar/${c.id}`}>
-                    <button style={{ marginRight: '5px', padding: '5px 10px', cursor: 'pointer' }}>Editar</button>
-                  </Link>
-                  <button onClick={() => excluirContrato(c.id)} style={{ padding: '5px 10px', cursor: 'pointer' }}>Excluir</button>
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+      {/* CARDS DE INDICADORES (KPIs) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px', marginBottom: '30px' }}>
+        <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', color: 'white', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 15px -3px rgba(15, 23, 42, 0.3)', position: 'relative', overflow: 'hidden' }}>
+          <div style={{ position: 'relative', zIndex: 2 }}>
+            <div style={{ fontSize: '0.9rem', fontWeight: '600', opacity: 0.9, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '5px' }}>Total de Contratos</div>
+            <div style={{ fontSize: '2.8rem', fontWeight: '800' }}>{contratos.length}</div>
+          </div>
+          <div style={{ position: 'absolute', right: '-10px', bottom: '-20px', fontSize: '8rem', opacity: 0.1, zIndex: 1, transform: 'rotate(-15deg)' }}>📂</div>
+        </div>
+
+        <div style={{ background: 'linear-gradient(135deg, #10b981 0%, #047857 100%)', color: 'white', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 15px -3px rgba(16, 185, 129, 0.3)', position: 'relative', overflow: 'hidden' }}>
+          <div style={{ position: 'relative', zIndex: 2 }}>
+            <div style={{ fontSize: '0.9rem', fontWeight: '600', opacity: 0.9, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '5px' }}>Valor Total Contratado</div>
+            <div style={{ fontSize: '2.5rem', fontWeight: '800' }}>{formatarMoeda(valorTotal)}</div>
+          </div>
+          <div style={{ position: 'absolute', right: '-10px', bottom: '-20px', fontSize: '8rem', opacity: 0.1, zIndex: 1, transform: 'rotate(-15deg)' }}>💲</div>
+        </div>
+      </div>
+
+      {/* BARRA DE FILTROS */}
+      <div style={{ background: '#fff', padding: '20px', borderRadius: '12px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', marginBottom: '25px', display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 300px' }}>
+          <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 'bold', color: '#475569', marginBottom: '8px' }}>Buscar Contrato, Órgão ou Objeto</label>
+          <input 
+            type="text" 
+            placeholder="Ex: Contrato 01/2026, Ambulância..." 
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            style={{ width: '100%', padding: '10px 15px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.95rem', outline: 'none', boxSizing: 'border-box' }}
+          />
+        </div>
+        <div style={{ minWidth: '250px' }}>
+          <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 'bold', color: '#475569', marginBottom: '8px' }}>Filtrar por Status</label>
+          <select 
+            value={filtroStatus}
+            onChange={(e) => setFiltroStatus(e.target.value)}
+            style={{ width: '100%', padding: '10px 15px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.95rem', outline: 'none', background: '#fff', cursor: 'pointer' }}
+          >
+            {statusUnicos.map(status => (
+              <option key={status} value={status}>{status}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* TABELA DE DADOS (DATA GRID) */}
+      <div style={{ background: '#fff', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+        {loading ? (
+          <div style={{ padding: '50px', textAlign: 'center', color: '#64748b' }}>Carregando contratos...</div>
+        ) : contratosFiltrados.length === 0 ? (
+          <div style={{ padding: '50px', textAlign: 'center', color: '#64748b' }}>
+            <div style={{ fontSize: '3rem', marginBottom: '10px' }}>📭</div>
+            Nenhum contrato encontrado.
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '1000px' }}>
+              <thead>
+                <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                  <th style={{ padding: '16px', color: '#475569', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Nº Contrato</th>
+                  <th style={{ padding: '16px', color: '#475569', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Órgão / Objeto</th>
+                  <th style={{ padding: '16px', color: '#475569', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Valor</th>
+                  <th style={{ padding: '16px', color: '#475569', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Datas (Assin. / Vigência)</th>
+                  <th style={{ padding: '16px', color: '#475569', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Status</th>
+                  <th style={{ padding: '16px', color: '#475569', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.5px', textAlign: 'center' }}>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {contratosFiltrados.map((contrato) => {
+                  const nomeOrgao = contrato.orgaos?.razao_social || 'Órgão não vinculado'
+                  const statusStyle = getStatusEstilo(contrato.status, contrato.vigencia)
+
+                  return (
+                    <tr key={contrato.id} style={{ borderBottom: '1px solid #f1f5f9', transition: 'background 0.2s' }} onMouseOver={(e) => e.currentTarget.style.background = '#f8fafc'} onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}>
+                      
+                      <td style={{ padding: '16px' }}>
+                        <strong style={{ color: '#0f172a', display: 'block', fontSize: '1rem' }}>{contrato.numero_contrato || 'S/N'}</strong>
+                        {contrato.licitacoes?.identificacao && (
+                          <span style={{ fontSize: '0.75rem', color: '#64748b', background: '#e2e8f0', padding: '2px 6px', borderRadius: '4px', marginTop: '4px', display: 'inline-block' }}>
+                            Ref: {contrato.licitacoes.identificacao}
+                          </span>
+                        )}
+                      </td>
+                      
+                      <td style={{ padding: '16px', maxWidth: '300px' }}>
+                        <div style={{ color: '#334155', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={nomeOrgao}>
+                          {nomeOrgao}
+                        </div>
+                        <div style={{ color: '#64748b', fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={contrato.objeto}>
+                          {contrato.objeto || 'Sem objeto descrito'}
+                        </div>
+                      </td>
+                      
+                      <td style={{ padding: '16px', fontWeight: '700', color: '#059669' }}>
+                        {formatarMoeda(contrato.valor)}
+                      </td>
+                      
+                      <td style={{ padding: '16px' }}>
+                        <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '2px' }}>
+                          Assinado: <span style={{ color: '#1e293b', fontWeight: '500' }}>{formatarData(contrato.data_assinatura)}</span>
+                        </div>
+                        <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
+                          Vence: <span style={{ color: statusStyle.bg === '#fee2e2' ? '#ef4444' : '#1e293b', fontWeight: 'bold' }}>{formatarData(contrato.vigencia)}</span>
+                        </div>
+                      </td>
+                      
+                      <td style={{ padding: '16px' }}>
+                        <span style={{ background: statusStyle.bg, color: statusStyle.color, padding: '6px 12px', borderRadius: '20px', fontSize: '0.8rem', fontWeight: 'bold', display: 'inline-block' }}>
+                          {statusStyle.texto}
+                        </span>
+                      </td>
+                      
+                      <td style={{ padding: '16px', textAlign: 'center' }}>
+                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                          {contrato.arquivo_url && (
+                            <a href={contrato.arquivo_url} target="_blank" rel="noopener noreferrer" title="Ver Contrato" style={{ background: '#e0e7ff', border: 'none', padding: '8px', borderRadius: '6px', cursor: 'pointer', color: '#4338ca', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              📄
+                            </a>
+                          )}
+                          <Link href={`/contratos/editar/${contrato.id}`}>
+                            <button title="Editar" style={{ background: '#fef3c7', border: 'none', padding: '8px', borderRadius: '6px', cursor: 'pointer' }}>
+                              ✏️
+                            </button>
+                          </Link>
+                          <button onClick={() => excluirContrato(contrato.id)} title="Excluir" style={{ background: '#fee2e2', border: 'none', padding: '8px', borderRadius: '6px', cursor: 'pointer' }}>
+                            🗑️
+                          </button>
+                        </div>
+                      </td>
+
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
     </div>
   )
 }
