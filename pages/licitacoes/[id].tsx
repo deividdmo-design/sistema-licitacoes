@@ -8,7 +8,7 @@ interface Anexo {
   nome_arquivo: string
   arquivo_url: string
   tipo_documento: string
-  data_upload: string // NOME CORRIGIDO AQUI
+  data_upload: string
 }
 
 interface Licitacao {
@@ -25,25 +25,31 @@ interface Licitacao {
 export default function DetalheLicitacao() {
   const router = useRouter()
   const { id } = router.query
+
   const [licitacao, setLicitacao] = useState<Licitacao | null>(null)
   const [anexos, setAnexos] = useState<Anexo[]>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
 
- useEffect(() => {
-  if (typeof id === 'string') {
-    carregarDados(id)
-  }
-}, [id])
+  useEffect(() => {
+    if (typeof id === 'string') {
+      carregarDados(id)
+    }
+  }, [id])
 
   async function carregarDados(licitacaoId: string) {
     setLoading(true)
     try {
-      const { data: lic } = await supabase
+      // Busca da licitação
+      const { data: lic, error: licError } = await supabase
         .from('licitacoes')
         .select('*, orgaos(razao_social)')
         .eq('id', licitacaoId)
         .single()
+
+      if (licError) {
+        console.error('Erro ao buscar licitação:', licError)
+      }
 
       if (lic) {
         setLicitacao({
@@ -52,12 +58,16 @@ export default function DetalheLicitacao() {
         })
       }
 
-      // CORREÇÃO: Ordenar por 'data_upload' em vez de 'created_at'
-      const { data: anx } = await supabase
+      // ⚠️ CORREÇÃO CRÍTICA: usar licitacaoId (não o id do router diretamente)
+      const { data: anx, error: anxError } = await supabase
         .from('licitacao_anexos')
         .select('*')
-        .eq('licitacao_id', id)
-        .order('data_upload', { ascending: false }) // AQUI ESTAVA O ERRO
+        .eq('licitacao_id', licitacaoId)
+        .order('data_upload', { ascending: false })
+
+      if (anxError) {
+        console.error('Erro ao buscar anexos:', anxError)
+      }
 
       setAnexos(anx || [])
     } catch (error) {
@@ -69,7 +79,8 @@ export default function DetalheLicitacao() {
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     if (!e.target.files || e.target.files.length === 0) return
-    
+    if (typeof id !== 'string') return
+
     setUploading(true)
     const files = Array.from(e.target.files)
 
@@ -84,7 +95,10 @@ export default function DetalheLicitacao() {
 
         if (uploadError) throw uploadError
 
-        const { data: { publicUrl } } = supabase.storage.from('editais').getPublicUrl(fileName)
+        const { data: { publicUrl } } = supabase
+          .storage
+          .from('editais')
+          .getPublicUrl(fileName)
 
         const { error: insertError } = await supabase
           .from('licitacao_anexos')
@@ -93,7 +107,6 @@ export default function DetalheLicitacao() {
             nome_arquivo: file.name,
             arquivo_url: publicUrl,
             tipo_documento: file.type || 'application/pdf'
-            // O campo data_upload é preenchido automaticamente pelo banco
           })
 
         if (insertError) throw insertError
@@ -104,23 +117,28 @@ export default function DetalheLicitacao() {
       }
     }
 
-    await carregarDados()
+    // ✅ CORRIGIDO (era a causa do erro na Vercel)
+    if (typeof id === 'string') {
+      await carregarDados(id)
+    }
+
     setUploading(false)
   }
 
   async function excluirAnexo(anexoId: string, fileUrl: string) {
     if (!confirm('Tem certeza que deseja excluir este anexo?')) return
-    
+    if (typeof id !== 'string') return
+
     try {
-      // Tenta remover do Storage
+      // Remove do Storage
       if (fileUrl) {
         const path = fileUrl.split('/storage/v1/object/public/editais/')[1]
         if (path) {
           await supabase.storage.from('editais').remove([path])
         }
       }
-      
-      // Remove do Banco de Dados
+
+      // Remove do banco
       const { error } = await supabase
         .from('licitacao_anexos')
         .delete()
@@ -128,85 +146,143 @@ export default function DetalheLicitacao() {
 
       if (error) throw error
 
-      // Atualiza a lista na tela
-      await carregarDados()
-      
+      // ✅ CORREÇÃO PRINCIPAL DO BUILD ERROR
+      await carregarDados(id)
+
     } catch (error: any) {
       console.error("Erro ao excluir:", error)
       alert('Erro ao excluir anexo: ' + error.message)
     }
   }
 
-  if (loading) return <div style={{ padding: '50px', textAlign: 'center' }}>Sincronizando com a Nordeste...</div>
-  if (!licitacao) return <div style={{ padding: '50px', textAlign: 'center' }}>Licitação não encontrada.</div>
+  if (loading) {
+    return (
+      <div style={{ padding: '50px', textAlign: 'center' }}>
+        Sincronizando com a Nordeste...
+      </div>
+    )
+  }
+
+  if (!licitacao) {
+    return (
+      <div style={{ padding: '50px', textAlign: 'center' }}>
+        Licitação não encontrada.
+      </div>
+    )
+  }
 
   return (
     <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '30px', fontFamily: 'sans-serif' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
-        <h1 style={{ color: '#0f172a', margin: 0 }}>{licitacao.identificacao}</h1>
+        <h1 style={{ color: '#0f172a', margin: 0 }}>
+          {licitacao.identificacao}
+        </h1>
+
         <Link href="/licitacoes">
-          <button style={{ padding: '8px 16px', background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '6px', cursor: 'pointer' }}>
+          <button style={{
+            padding: '8px 16px',
+            background: '#f1f5f9',
+            border: '1px solid #cbd5e1',
+            borderRadius: '6px',
+            cursor: 'pointer'
+          }}>
             Voltar
           </button>
         </Link>
       </div>
 
-      <div style={{ background: '#f8fafc', padding: '25px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '30px' }}>
-        <h3 style={{ marginTop: 0, color: '#334155' }}>Detalhes da Licitação</h3>
+      <div style={{
+        background: '#f8fafc',
+        padding: '25px',
+        borderRadius: '12px',
+        border: '1px solid #e2e8f0',
+        marginBottom: '30px'
+      }}>
+        <h3 style={{ marginTop: 0, color: '#334155' }}>
+          Detalhes da Licitação
+        </h3>
+
         <p><strong>Órgão:</strong> {licitacao.orgaos?.razao_social || 'Não informado'}</p>
         <p><strong>Objeto:</strong> {licitacao.objeto}</p>
         <p><strong>Status:</strong> {licitacao.status}</p>
       </div>
 
-      <div style={{ background: 'white', padding: '25px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-        <h3 style={{ marginTop: 0, color: '#334155' }}>📁 Documentos (Editais, Planilhas, TR)</h3>
-        
-        <div style={{ 
-          marginBottom: '20px', 
-          padding: '20px', 
-          border: '2px dashed #cbd5e1', 
+      <div style={{
+        background: 'white',
+        padding: '25px',
+        borderRadius: '12px',
+        border: '1px solid #e2e8f0',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+      }}>
+        <h3 style={{ marginTop: 0, color: '#334155' }}>
+          📁 Documentos (Editais, Planilhas, TR)
+        </h3>
+
+        <div style={{
+          marginBottom: '20px',
+          padding: '20px',
+          border: '2px dashed #cbd5e1',
           borderRadius: '10px',
           textAlign: 'center',
           background: uploading ? '#f8fafc' : 'transparent'
         }}>
           <label style={{ cursor: uploading ? 'not-allowed' : 'pointer', color: '#475569' }}>
             {uploading ? 'Processando arquivos...' : '📎 Clique aqui para anexar múltiplos arquivos'}
-            <input 
-              type="file" 
-              multiple 
-              onChange={handleFileUpload} 
-              hidden 
-              disabled={uploading} 
+            <input
+              type="file"
+              multiple
+              onChange={handleFileUpload}
+              hidden
+              disabled={uploading}
             />
           </label>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {anexos.length === 0 && !uploading && (
-            <p style={{ color: '#94a3b8', textAlign: 'center' }}>Nenhum documento anexado ainda.</p>
+            <p style={{ color: '#94a3b8', textAlign: 'center' }}>
+              Nenhum documento anexado ainda.
+            </p>
           )}
-          
+
           {anexos.map((anexo) => (
-            <div key={anexo.id} style={{ 
-              display: 'flex', 
-              justifyContent: 'space-between', 
-              alignItems: 'center', 
-              padding: '12px 16px', 
-              background: '#f1f5f9', 
-              borderRadius: '8px',
-              border: '1px solid #e2e8f0'
-            }}>
-              <a 
-                href={anexo.arquivo_url} 
-                target="_blank" 
-                rel="noreferrer" 
-                style={{ textDecoration: 'none', color: '#2563eb', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '8px' }}
+            <div
+              key={anexo.id}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '12px 16px',
+                background: '#f1f5f9',
+                borderRadius: '8px',
+                border: '1px solid #e2e8f0'
+              }}
+            >
+              <a
+                href={anexo.arquivo_url}
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  textDecoration: 'none',
+                  color: '#2563eb',
+                  fontWeight: '500',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}
               >
                 📄 {anexo.nome_arquivo}
               </a>
-              <button 
+
+              <button
                 onClick={() => excluirAnexo(anexo.id, anexo.arquivo_url)}
-                style={{ color: '#991b1b', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
+                style={{
+                  color: '#991b1b',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontWeight: 'bold'
+                }}
               >
                 Excluir
               </button>
