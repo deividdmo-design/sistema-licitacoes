@@ -8,7 +8,7 @@ interface Orgao {
   cnpj: string
   telefone?: string
   email?: string
-  gestor?: string
+  gestor_contrato?: string // Nome corrigido (era 'gestor')
 }
 
 export default function OrgaosLista() {
@@ -39,7 +39,7 @@ export default function OrgaosLista() {
 
   async function excluirOrgao(id: string) {
     if (!confirm('Tem certeza que deseja excluir este órgão? Contratos e licitações vinculados a ele podem ser afetados.')) return
-    
+
     try {
       const { error } = await supabase.from('orgaos').delete().eq('id', id)
       if (error) throw error
@@ -53,9 +53,9 @@ export default function OrgaosLista() {
   const orgaosFiltrados = orgaos.filter(org => {
     const termoBusca = busca.toLowerCase()
     return (
-      (org.razao_social || '').toLowerCase().includes(termoBusca) || 
+      (org.razao_social || '').toLowerCase().includes(termoBusca) ||
       (org.cnpj || '').toLowerCase().includes(termoBusca) ||
-      (org.gestor || '').toLowerCase().includes(termoBusca)
+      (org.gestor_contrato || '').toLowerCase().includes(termoBusca) // campo corrigido
     )
   })
 
@@ -150,8 +150,8 @@ export default function OrgaosLista() {
                     </td>
 
                     <td style={{ padding: '16px 20px', color: '#334155', fontWeight: '500' }}>
-                      {org.gestor ? (
-                        <span style={{ background: '#f1f5f9', padding: '4px 10px', borderRadius: '6px', fontSize: '0.85rem' }}>👤 {org.gestor}</span>
+                      {org.gestor_contrato ? ( // campo corrigido
+                        <span style={{ background: '#f1f5f9', padding: '4px 10px', borderRadius: '6px', fontSize: '0.85rem' }}>👤 {org.gestor_contrato}</span>
                       ) : (
                         <span style={{ color: '#94a3b8' }}>-</span>
                       )}
