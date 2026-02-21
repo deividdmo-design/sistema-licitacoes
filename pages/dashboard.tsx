@@ -51,13 +51,10 @@ export default function Dashboard() {
     setLoading(true)
     const hoje = new Date()
     hoje.setHours(0, 0, 0, 0)
-    const daqui7Dias = new Date(hoje.getTime() + 7 * 24 * 60 * 60 * 1000)
     const daqui15Dias = new Date(hoje.getTime() + 15 * 24 * 60 * 60 * 1000)
-    const daqui30Dias = new Date(hoje.getTime() + 30 * 24 * 60 * 60 * 1000)
     const daqui60Dias = new Date(hoje.getTime() + 60 * 24 * 60 * 60 * 1000)
 
     try {
-      // 1. Busca Licitações para processar as Métricas
       const { data: allLics } = await supabase.from('licitacoes').select('id, valor_estimado, status, modalidade')
       
       let valorTotal = 0
@@ -74,7 +71,6 @@ export default function Dashboard() {
         })
       }
 
-      // 2. Contagens Gerais
       const { count: countOrg } = await supabase.from('orgaos').select('*', { count: 'exact', head: true })
       const { count: countDoc } = await supabase.from('documentos').select('*', { count: 'exact', head: true })
       const { count: countContratos } = await supabase.from('contratos').select('*', { count: 'exact', head: true })
@@ -89,7 +85,6 @@ export default function Dashboard() {
         modalidadeCount: contagemModalidade
       })
 
-      // 3. Documentos Críticos (próximos 15 dias)
       const { data: docs } = await supabase
         .from('documentos')
         .select('id, nome, vencimento, unidades(codigo)')
@@ -101,7 +96,6 @@ export default function Dashboard() {
 
       if (docs) setDocumentos(docs as any)
 
-      // 4. Licitações Próximas (até 15 dias)
       const { data: lics } = await supabase
         .from('licitacoes')
         .select('id, identificacao, data_limite_participacao, status') 
@@ -112,7 +106,6 @@ export default function Dashboard() {
 
       if (lics) setLicitacoesProximas(lics as any)
 
-      // 5. Contratos Próximos (até 60 dias) – ajuste o nome da coluna conforme sua tabela
       const { data: conts } = await supabase
         .from('contratos')
         .select('id, identificacao, data_vencimento')
@@ -140,10 +133,9 @@ export default function Dashboard() {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(valor)
   }
 
-  // Funções para determinar a cor do card de alerta
   function getCorAlertaDocumentos() {
-    if (documentos.length === 0) return '#94a3b8' // cinza
-    return '#ef4444' // vermelho
+    if (documentos.length === 0) return '#94a3b8' 
+    return '#ef4444' 
   }
 
   function getCorAlertaLicitacoes() {
@@ -154,7 +146,7 @@ export default function Dashboard() {
       const dataLic = new Date(lic.data_limite_participacao + 'T00:00:00')
       return dataLic <= daqui7Dias
     })
-    return temUrgente ? '#ef4444' : '#f59e0b' // vermelho ou laranja
+    return temUrgente ? '#ef4444' : '#f59e0b'
   }
 
   function getCorAlertaContratos() {
@@ -165,7 +157,18 @@ export default function Dashboard() {
       const dataCt = new Date(ct.data_vencimento + 'T00:00:00')
       return dataCt <= daqui30Dias
     })
-    return temVermelho ? '#ef4444' : '#f59e0b' // vermelho se <=30 dias, laranja se entre 31 e 60
+    return temVermelho ? '#ef4444' : '#f59e0b'
+  }
+
+  function ajustarTom(cor: string, percent: number): string {
+    if (cor === '#94a3b8') return cor
+    const r = parseInt(cor.slice(1,3), 16)
+    const g = parseInt(cor.slice(3,5), 16)
+    const b = parseInt(cor.slice(5,7), 16)
+    const novoR = Math.min(255, r + percent)
+    const novoG = Math.min(255, g + percent)
+    const novoB = Math.min(255, b + percent)
+    return `#${((1 << 24) + (novoR << 16) + (novoG << 8) + novoB).toString(16).slice(1)}`
   }
 
   if (loading) return (
@@ -182,13 +185,12 @@ export default function Dashboard() {
   return (
     <div style={{ maxWidth: '1400px', margin: '0 auto', fontFamily: '"Inter", sans-serif', paddingBottom: '40px' }}>
       
-      {/* HEADER TÁTICO COM TRÊS CARDS DE ALERTA E PIPELINE TOTAL */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', background: '#fff', padding: '20px 30px', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
         <div>
           <h1 style={{ color: '#0f172a', margin: '0 0 5px 0', fontSize: '1.8rem', fontWeight: '800' }}>Painel Executivo</h1>
           <p style={{ color: '#64748b', margin: 0, fontSize: '0.95rem' }}>Monitoramento de editais e saúde documental da Nordeste Emergências.</p>
         </div>
-        <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
           <div style={{ textAlign: 'right', marginRight: '20px' }}>
             <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Pipeline Total</div>
             <div style={{ fontSize: '1.8rem', fontWeight: '900', color: '#10b981' }}>{formatarMoeda(kpis.valorEmDisputa)}</div>
@@ -198,83 +200,128 @@ export default function Dashboard() {
           <button
             onClick={() => router.push('/documentos')}
             style={{
-              background: getCorAlertaDocumentos(),
+              background: `linear-gradient(135deg, ${getCorAlertaDocumentos()} 0%, ${ajustarTom(getCorAlertaDocumentos(), 20)} 100%)`,
               color: 'white',
-              padding: '10px 18px',
-              borderRadius: '12px',
-              fontWeight: 'bold',
+              padding: '16px 24px',
+              borderRadius: '20px',
+              fontWeight: '600',
               display: 'flex',
-              flexDirection: 'column',
               alignItems: 'center',
-              gap: '4px',
-              boxShadow: '0 4px 10px rgba(0,0,0,0.2)',
-              border: 'none',
+              gap: '15px',
               cursor: 'pointer',
-              minWidth: '100px',
-              transition: 'transform 0.2s'
+              minWidth: '200px',
+              boxShadow: `0 10px 25px -8px ${getCorAlertaDocumentos()}`,
+              transition: 'all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)',
+              backdropFilter: 'blur(4px)',
+              border: '1px solid rgba(255,255,255,0.2)',
+              animation: documentos.length > 0 ? 'pulse 2s infinite' : 'none'
             }}
-            onMouseOver={e => e.currentTarget.style.transform = 'scale(1.05)'}
-            onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}
+            onMouseOver={e => {
+              e.currentTarget.style.transform = 'translateY(-4px)';
+              e.currentTarget.style.boxShadow = `0 20px 30px -10px ${getCorAlertaDocumentos()}`;
+            }}
+            onMouseOut={e => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = `0 10px 25px -8px ${getCorAlertaDocumentos()}`;
+            }}
           >
-            <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', opacity: 0.9 }}>Documentos</span>
-            <span style={{ fontSize: '1.8rem', fontWeight: '900', lineHeight: 1 }}>{documentos.length}</span>
+            <div style={{ background: 'rgba(255,255,255,0.25)', borderRadius: '12px', padding: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" />
+                <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" />
+              </svg>
+            </div>
+            <div style={{ textAlign: 'left' }}>
+              <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '1px', opacity: 0.9 }}>Documentos</div>
+              <div style={{ fontSize: '2rem', fontWeight: '800', lineHeight: 1 }}>{documentos.length}</div>
+            </div>
           </button>
 
           {/* Card Licitações */}
           <button
             onClick={() => router.push('/licitacoes')}
             style={{
-              background: getCorAlertaLicitacoes(),
+              background: `linear-gradient(135deg, ${getCorAlertaLicitacoes()} 0%, ${ajustarTom(getCorAlertaLicitacoes(), 20)} 100%)`,
               color: 'white',
-              padding: '10px 18px',
-              borderRadius: '12px',
-              fontWeight: 'bold',
+              padding: '16px 24px',
+              borderRadius: '20px',
+              fontWeight: '600',
               display: 'flex',
-              flexDirection: 'column',
               alignItems: 'center',
-              gap: '4px',
-              boxShadow: '0 4px 10px rgba(0,0,0,0.2)',
-              border: 'none',
+              gap: '15px',
               cursor: 'pointer',
-              minWidth: '100px',
-              transition: 'transform 0.2s'
+              minWidth: '200px',
+              boxShadow: `0 10px 25px -8px ${getCorAlertaLicitacoes()}`,
+              transition: 'all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)',
+              backdropFilter: 'blur(4px)',
+              border: '1px solid rgba(255,255,255,0.2)',
+              animation: licitacoesProximas.length > 0 ? 'pulse 2s infinite' : 'none'
             }}
-            onMouseOver={e => e.currentTarget.style.transform = 'scale(1.05)'}
-            onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}
+            onMouseOver={e => {
+              e.currentTarget.style.transform = 'translateY(-4px)';
+              e.currentTarget.style.boxShadow = `0 20px 30px -10px ${getCorAlertaLicitacoes()}`;
+            }}
+            onMouseOut={e => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = `0 10px 25px -8px ${getCorAlertaLicitacoes()}`;
+            }}
           >
-            <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', opacity: 0.9 }}>Licitações</span>
-            <span style={{ fontSize: '1.8rem', fontWeight: '900', lineHeight: 1 }}>{licitacoesProximas.length}</span>
+            <div style={{ background: 'rgba(255,255,255,0.25)', borderRadius: '12px', padding: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+            </div>
+            <div style={{ textAlign: 'left' }}>
+              <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '1px', opacity: 0.9 }}>Licitações</div>
+              <div style={{ fontSize: '2rem', fontWeight: '800', lineHeight: 1 }}>{licitacoesProximas.length}</div>
+            </div>
           </button>
 
           {/* Card Contratos */}
           <button
             onClick={() => router.push('/contratos')}
             style={{
-              background: getCorAlertaContratos(),
+              background: `linear-gradient(135deg, ${getCorAlertaContratos()} 0%, ${ajustarTom(getCorAlertaContratos(), 20)} 100%)`,
               color: 'white',
-              padding: '10px 18px',
-              borderRadius: '12px',
-              fontWeight: 'bold',
+              padding: '16px 24px',
+              borderRadius: '20px',
+              fontWeight: '600',
               display: 'flex',
-              flexDirection: 'column',
               alignItems: 'center',
-              gap: '4px',
-              boxShadow: '0 4px 10px rgba(0,0,0,0.2)',
-              border: 'none',
+              gap: '15px',
               cursor: 'pointer',
-              minWidth: '100px',
-              transition: 'transform 0.2s'
+              minWidth: '200px',
+              boxShadow: `0 10px 25px -8px ${getCorAlertaContratos()}`,
+              transition: 'all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)',
+              backdropFilter: 'blur(4px)',
+              border: '1px solid rgba(255,255,255,0.2)',
+              animation: contratosProximos.length > 0 ? 'pulse 2s infinite' : 'none'
             }}
-            onMouseOver={e => e.currentTarget.style.transform = 'scale(1.05)'}
-            onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}
+            onMouseOver={e => {
+              e.currentTarget.style.transform = 'translateY(-4px)';
+              e.currentTarget.style.boxShadow = `0 20px 30px -10px ${getCorAlertaContratos()}`;
+            }}
+            onMouseOut={e => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = `0 10px 25px -8px ${getCorAlertaContratos()}`;
+            }}
           >
-            <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', opacity: 0.9 }}>Contratos</span>
-            <span style={{ fontSize: '1.8rem', fontWeight: '900', lineHeight: 1 }}>{contratosProximos.length}</span>
+            <div style={{ background: 'rgba(255,255,255,0.25)', borderRadius: '12px', padding: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+              </svg>
+            </div>
+            <div style={{ textAlign: 'left' }}>
+              <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '1px', opacity: 0.9 }}>Contratos</div>
+              <div style={{ fontSize: '2rem', fontWeight: '800', lineHeight: 1 }}>{contratosProximos.length}</div>
+            </div>
           </button>
         </div>
       </div>
 
-      {/* 4 CARDS MACRO */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', marginBottom: '30px' }}>
         <div style={{ background: '#fff', padding: '25px', borderRadius: '16px', borderTop: '4px solid #3b82f6', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
           <div style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '10px' }}>Licitações Ativas</div>
@@ -294,12 +341,9 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* SEÇÃO DO MEIO: FUNIL & MODALIDADES */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '30px', marginBottom: '30px' }}>
         <div style={{ background: '#fff', borderRadius: '16px', padding: '30px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-          <h2 style={{ fontSize: '1.1rem', color: '#0f172a', margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: '10px' }}>
-            📊 Pipeline de Licitações (Status)
-          </h2>
+          <h2 style={{ fontSize: '1.1rem', color: '#0f172a', margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: '10px' }}>📊 Pipeline de Licitações (Status)</h2>
           {statusOrdenados.length === 0 ? (
              <p style={{ color: '#94a3b8', fontStyle: 'italic' }}>Nenhuma licitação cadastrada para gerar o gráfico.</p>
           ) : (
@@ -325,9 +369,7 @@ export default function Dashboard() {
         </div>
 
         <div style={{ background: '#fff', borderRadius: '16px', padding: '30px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-          <h2 style={{ fontSize: '1.1rem', color: '#0f172a', margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: '10px' }}>
-            🎯 Top Modalidades
-          </h2>
+          <h2 style={{ fontSize: '1.1rem', color: '#0f172a', margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: '10px' }}>🎯 Top Modalidades</h2>
           {modalidadesOrdenadas.length === 0 ? (
              <p style={{ color: '#94a3b8', fontStyle: 'italic' }}>Sem dados.</p>
           ) : (
@@ -343,7 +385,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* SEÇÃO INFERIOR: AVISOS CRÍTICOS */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '30px' }}>
         <div style={{ background: '#fff', borderRadius: '16px', padding: '30px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -403,7 +444,7 @@ export default function Dashboard() {
       <style>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.5; transform: scale(1.1); }
+          50% { opacity: 0.8; transform: scale(1.02); }
         }
       `}</style>
     </div>
