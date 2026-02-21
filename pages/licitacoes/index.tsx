@@ -2,11 +2,6 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import Link from 'next/link'
 
-interface Orgao {
-  nome?: string
-  razao_social?: string
-}
-
 interface Licitacao {
   id: string
   identificacao: string
@@ -15,7 +10,7 @@ interface Licitacao {
   data_limite_participacao: string
   status: string
   arquivo_url?: string
-  orgaos?: Orgao
+  orgaos?: { razao_social: string } | { razao_social: string }[] // Pode vir como objeto ou array
 }
 
 export default function LicitacoesLista() {
@@ -31,14 +26,13 @@ export default function LicitacoesLista() {
   async function carregarLicitacoes() {
     setLoading(true)
     try {
-      // Puxa as licitações e os dados do órgão relacionado
       const { data, error } = await supabase
         .from('licitacoes')
         .select('*, orgaos(razao_social)')
         .order('data_limite_participacao', { ascending: false })
 
       if (error) throw error
-      if (data) setLicitacoes(data as any)
+      setLicitacoes(data || [])
     } catch (error) {
       console.error('Erro ao buscar licitações:', error)
       alert('Erro ao carregar a lista de licitações.')
@@ -49,11 +43,10 @@ export default function LicitacoesLista() {
 
   async function excluirLicitacao(id: string) {
     if (!confirm('Tem certeza que deseja excluir esta licitação? Essa ação não pode ser desfeita.')) return
-    
+
     try {
       const { error } = await supabase.from('licitacoes').delete().eq('id', id)
       if (error) throw error
-      // Recarrega a lista após excluir
       carregarLicitacoes()
     } catch (error: any) {
       alert('Erro ao excluir: ' + error.message)
@@ -80,17 +73,26 @@ export default function LicitacoesLista() {
     return { bg: '#f1f5f9', color: '#475569' } // Pendente / Outros
   }
 
+  // Extrai lista de status únicos para o select de filtro
+  const statusUnicos = ['Todos', ...Array.from(new Set(licitacoes.map(l => l.status).filter(Boolean)))]
+
+  // Função auxiliar para obter o nome do órgão (lida com objeto ou array)
+  function getNomeOrgao(orgaos: Licitacao['orgaos']): string {
+    if (!orgaos) return 'Órgão não vinculado'
+    if (Array.isArray(orgaos)) {
+      return orgaos[0]?.razao_social || 'Órgão não vinculado'
+    }
+    return orgaos.razao_social || 'Órgão não vinculado'
+  }
+
   // Lógica de filtro e busca
   const licitacoesFiltradas = licitacoes.filter(lic => {
     const termoBusca = busca.toLowerCase()
-    const nomeOrgao = (lic.orgaos?.razao_social || lic.orgaos?.nome || '').toLowerCase()
+    const nomeOrgao = getNomeOrgao(lic.orgaos).toLowerCase()
     const bateBusca = lic.identificacao?.toLowerCase().includes(termoBusca) || nomeOrgao.includes(termoBusca)
     const bateStatus = filtroStatus === 'Todos' || lic.status === filtroStatus
     return bateBusca && bateStatus
   })
-
-  // Extrai lista de status únicos para o select de filtro
-  const statusUnicos = ['Todos', ...Array.from(new Set(licitacoes.map(l => l.status).filter(Boolean)))]
 
   return (
     <div style={{ maxWidth: '1400px', margin: '0 auto', fontFamily: '"Inter", sans-serif', paddingBottom: '40px' }}>
@@ -103,7 +105,7 @@ export default function LicitacoesLista() {
           </h1>
           <p style={{ color: '#64748b', margin: 0 }}>Acompanhe, filtre e gerencie todos os editais em andamento.</p>
         </div>
-        <Link href="/licitacoes/nova">
+        <Link href="/licitacoes/novo"> {/* Corrigido: de "nova" para "novo" */}
           <button style={{ background: '#3b82f6', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 6px -1px rgba(59, 130, 246, 0.3)', transition: 'background 0.2s' }} onMouseOver={(e) => e.currentTarget.style.background = '#2563eb'} onMouseOut={(e) => e.currentTarget.style.background = '#3b82f6'}>
             <span>➕</span> Nova Licitação
           </button>
@@ -160,7 +162,7 @@ export default function LicitacoesLista() {
               </thead>
               <tbody>
                 {licitacoesFiltradas.map((lic) => {
-                  const nomeOrgao = lic.orgaos?.razao_social || lic.orgaos?.nome || 'Órgão não vinculado'
+                  const nomeOrgao = getNomeOrgao(lic.orgaos)
                   const statusStyle = getStatusEstilo(lic.status)
 
                   return (
