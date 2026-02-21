@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import Link from 'next/link'
-import { useRouter } from 'next/router' // Importação adicionada
+import { useRouter } from 'next/router'
 
 interface DocumentoCritico {
   id: string
@@ -30,7 +30,7 @@ interface KPIs {
 }
 
 export default function Dashboard() {
-  const router = useRouter() // Inicialização do roteador para navegação
+  const router = useRouter()
   const [documentos, setDocumentos] = useState<DocumentoCritico[]>([])
   const [licitacoesProximas, setLicitacoesProximas] = useState<Licitacao[]>([])
   const [kpis, setKpis] = useState<KPIs>({ 
@@ -82,11 +82,12 @@ export default function Dashboard() {
         modalidadeCount: contagemModalidade
       })
 
-      // 3. Documentos Críticos (Próximos 15 dias) - FILTRO DE NULOS INTEGRADO
+      // 3. Documentos Críticos (próximos 15 dias) - FILTRO CORRIGIDO
       const { data: docs } = await supabase
         .from('documentos')
         .select('id, nome, vencimento, unidades(codigo)')
-        .not('vencimento', 'is', null) // Ignora documentos sem data
+        .not('vencimento', 'is', null)               // exclui documentos sem data
+        .gte('vencimento', hoje.toISOString().split('T')[0])   // apenas a partir de hoje
         .lte('vencimento', daqui15Dias.toISOString().split('T')[0])
         .order('vencimento', { ascending: true })
         .limit(5)
@@ -148,7 +149,7 @@ export default function Dashboard() {
             <div style={{ fontSize: '1.8rem', fontWeight: '900', color: '#10b981' }}>{formatarMoeda(kpis.valorEmDisputa)}</div>
           </div>
           
-          {/* BOTÃO DE ALERTA RESTAURADO */}
+          {/* BOTÃO DE ALERTA */}
           {alertasGerais > 0 && (
             <button 
               onClick={() => router.push('/documentos')}
